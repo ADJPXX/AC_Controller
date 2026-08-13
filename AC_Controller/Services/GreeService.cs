@@ -5,79 +5,51 @@ namespace AC_Controller.Services;
 
 public sealed class GreeService
 {
-    private readonly GreeNetworkService _network;
-    private readonly GreeCryptoService _crypto;
-
-    public GreeService()
-    {
-        _network = new GreeNetworkService();
-        _crypto = new GreeCryptoService();
-    }
+    private readonly GreeNetworkService _network = new();
+    private readonly GreeCryptoService _crypto = new();
 
 
     public async Task<GreeStatus> GetStatusAsync()
     {
-        string statusPack =
-            CreateStatusPack();
+        var statusPack = CreateStatusPack();
 
-        GcmResult encrypted =
-            _crypto.Encrypt(statusPack);
+        var encrypted = _crypto.Encrypt(statusPack);
 
-        string request =
-            CreateRequest(
-                encrypted,
-                0);
+        var request = CreateRequest(encrypted, 0);
 
-        string response =
-            await _network.SendAsync(request);
+        var response = await _network.SendAsync(request);
 
-        using JsonDocument document =
-            JsonDocument.Parse(response);
+        using var document = JsonDocument.Parse(response);
 
-        JsonElement root =
-            document.RootElement;
+        var root = document.RootElement;
 
-        if (!root.TryGetProperty(
-                "pack",
-                out JsonElement packElement))
+        if (!root.TryGetProperty("pack", out var packElement))
         {
-            throw new InvalidOperationException(
-                "A resposta do Gree não contém 'pack'.");
+            throw new InvalidOperationException("A resposta do Gree não contém 'pack'.");
         }
 
-        if (!root.TryGetProperty(
-                "tag",
-                out JsonElement tagElement))
+        if (!root.TryGetProperty("tag", out var tagElement))
         {
-            throw new InvalidOperationException(
-                "A resposta do Gree não contém 'tag'.");
+            throw new InvalidOperationException("A resposta do Gree não contém 'tag'.");
         }
 
-        string pack =
-            packElement.GetString() ?? string.Empty;
+        var pack = packElement.GetString() ?? string.Empty;
 
-        string tag =
-            tagElement.GetString() ?? string.Empty;
+        var tag = tagElement.GetString() ?? string.Empty;
 
         if (string.IsNullOrWhiteSpace(pack))
         {
-            throw new InvalidOperationException(
-                "O Gree retornou um 'pack' vazio.");
+            throw new InvalidOperationException("O Gree retornou um 'pack' vazio.");
         }
 
         if (string.IsNullOrWhiteSpace(tag))
         {
-            throw new InvalidOperationException(
-                "O Gree retornou uma 'tag' vazia.");
+            throw new InvalidOperationException("O Gree retornou uma 'tag' vazia.");
         }
 
-        string decryptedResponse =
-            _crypto.Decrypt(
-                pack,
-                tag);
+        var decryptedResponse = _crypto.Decrypt(pack, tag);
 
-        return ParseStatusResponse(
-            decryptedResponse);
+        return ParseStatusResponse(decryptedResponse);
     }
 
 
@@ -91,76 +63,101 @@ public sealed class GreeService
         return SetPowerAsync(false);
     }
 
-    public async Task SetPowerAsync(bool power)
+    private async Task SetPowerAsync(bool power)
     {
-        string commandPack =
-            $$"""{"opt":["Pow"],"p":[{{(power ? 1 : 0)}}],"t":"cmd"}""";
+        var commandPack = $$"""{"opt":["Pow"],"p":[{{(power ? 1 : 0)}}],"t":"cmd"}""";
 
-        GcmResult encrypted =
-            _crypto.Encrypt(commandPack);
+        var encrypted = _crypto.Encrypt(commandPack);
 
-        string request =
-            CreateRequest(
-                encrypted,
-                0);
+        var request = CreateRequest(encrypted, 0);
 
-        string response =
-            await _network.SendAsync(request);
+        var response = await _network.SendAsync(request);
 
         ValidateCommandResponse(response);
     }
 
-    private static string CreateStatusPack()
-    {
-        string columns =
-            string.Join(
-                ",",
-                GreeResources.StatusColumns
-                    .Select(
-                        column => $"\"{column}\""));
 
-        return
-            $$"""{"cols":[{{columns}}],"mac":"{{GreeResources.Mac}}","t":"status"}""";
+    public Task SetModeAsync(int mode)
+    {
+        if (mode is < 0 or > 4)
+        {
+            throw new ArgumentOutOfRangeException(nameof(mode), "O modo deve estar entre 0 e 4.");
+        }
+
+        return SendCommandAsync(["Mod"], [mode]);
     }
 
-    private static string CreateRequest(
-        GcmResult encrypted,
-        int id)
+
+    public Task SetTemperatureAsync(int temperature)
     {
-        return
-            $$"""{"cid":"app","i":{{id}},"t":"pack","uid":0,"tcid":"{{GreeResources.Mac}}","tag":"{{encrypted.Tag}}","pack":"{{encrypted.Pack}}"}""";
+        if (temperature is < 16 or > 30)
+            throw new ArgumentOutOfRangeException(nameof(temperature), "A temperatura deve estar entre 16 e 30 °C.");
+
+        return SendCommandAsync(["SetTem"], [temperature]);
+    }
+
+
+    private async Task SendCommandAsync(string[] options, int[] values)
+    {
+        var optionsJson = string.Join(",", options.Select(option => $"\"{option}\""));
+
+        var valuesJson = string.Join(",", values);
+
+        var commandPack = $$"""{"opt":[{{optionsJson}}],"p":[{{valuesJson}}],"t":"cmd"}""";
+
+        var encrypted = _crypto.Encrypt(commandPack);
+
+        var request = CreateRequest(encrypted, 0);
+
+        var response = await _network.SendAsync(request);
+
+        ValidateCommandResponse(response);
+    }
+
+
+    private static string CreateStatusPack()
+    {
+        var columns = string.Join(",", GreeResources.StatusColumns.Select(column => $"\"{column}\""));
+
+        return $$"""{"cols":[{{columns}}],"mac":"{{GreeResources.Mac}}","t":"status"}""";
+    }
+
+    private static string CreateRequest(GcmResult encrypted, int id)
+    {
+        return $$"""{"cid":"app","i":{{id}},"t":"pack","uid":0,"tcid":"{{GreeResources.Mac}}","tag":"{{encrypted.Tag}}","pack":"{{encrypted.Pack}}"}""";
     }
 
     private static GreeStatus ParseStatusResponse(string decryptedResponse)
     {
-        using JsonDocument document = JsonDocument.Parse(decryptedResponse);
+        using var document = JsonDocument.Parse(decryptedResponse);
 
-        JsonElement root = document.RootElement;
+        var root = document.RootElement;
 
-        if (!root.TryGetProperty("cols", out JsonElement colsElement))
+        if (!root.TryGetProperty("cols", out var colsElement))
+        {
             throw new InvalidOperationException("A resposta do Gree não contém 'cols'.");
+        }
 
-        if (!root.TryGetProperty("dat", out JsonElement datElement))
+        if (!root.TryGetProperty("dat", out var datElement))
+        {
             throw new InvalidOperationException("A resposta do Gree não contém 'dat'.");
+        }
 
-        string[] columns = colsElement
-            .EnumerateArray()
-            .Select(x => x.GetString() ?? string.Empty)
-            .ToArray();
+        var columns = colsElement.EnumerateArray().Select(x => x.GetString() ?? string.Empty).ToArray();
 
-        JsonElement[] values = datElement
-            .EnumerateArray()
-            .ToArray();
+        var values = datElement.EnumerateArray().ToArray();
 
         if (columns.Length != values.Length)
-            throw new InvalidOperationException(
-                "A quantidade de colunas recebidas não corresponde à quantidade de valores."
-            );
+        {
+            throw new InvalidOperationException("A quantidade de colunas recebidas não corresponde à quantidade de valores.");
+        }
 
         Dictionary<string, JsonElement> data = new();
 
-        for (int i = 0; i < columns.Length; i++)
+        for (var i = 0; i < columns.Length; i++)
+        {
             data[columns[i]] = values[i];
+        }
 
         return new GreeStatus
         {
@@ -178,39 +175,44 @@ public sealed class GreeService
 
     private void ValidateCommandResponse(string response)
     {
-        using JsonDocument document = JsonDocument.Parse(response);
+        using var document = JsonDocument.Parse(response);
 
-        JsonElement root = document.RootElement;
+        var root = document.RootElement;
 
-        if (!root.TryGetProperty("pack", out JsonElement packElement))
+        if (!root.TryGetProperty("pack", out var packElement))
+        {
             throw new InvalidOperationException("A resposta do Gree não contém 'pack'.");
+        }
 
-        if (!root.TryGetProperty("tag", out JsonElement tagElement))
+        if (!root.TryGetProperty("tag", out var tagElement))
+        {
             throw new InvalidOperationException("A resposta do Gree não contém 'tag'.");
+        }
 
-        string pack = packElement.GetString() ?? string.Empty;
-        string tag = tagElement.GetString() ?? string.Empty;
+        var pack = packElement.GetString() ?? string.Empty;
+        var tag = tagElement.GetString() ?? string.Empty;
 
         if (string.IsNullOrWhiteSpace(pack) || string.IsNullOrWhiteSpace(tag))
+        {
             throw new InvalidOperationException("O Gree retornou uma resposta inválida.");
+        }
 
-        string decryptedResponse = _crypto.Decrypt(pack, tag);
+        var decryptedResponse = _crypto.Decrypt(pack, tag);
 
-        using JsonDocument decryptedDocument =
-            JsonDocument.Parse(decryptedResponse);
+        using var decryptedDocument = JsonDocument.Parse(decryptedResponse);
 
-        JsonElement decryptedRoot = decryptedDocument.RootElement;
+        var decryptedRoot = decryptedDocument.RootElement;
 
-        if (!decryptedRoot.TryGetProperty("r", out JsonElement resultElement))
-            throw new InvalidOperationException(
-                "A resposta descriptografada do Gree não contém 'r'."
-            );
+        if (!decryptedRoot.TryGetProperty("r", out var resultElement))
+        {
+            throw new InvalidOperationException("A resposta descriptografada do Gree não contém 'r'.");
+        }
 
-        int result = resultElement.GetInt32();
+        var result = resultElement.GetInt32();
 
         if (result != 200)
-            throw new InvalidOperationException(
-                $"O Gree retornou o código de erro: {result}."
-            );
+        {
+            throw new InvalidOperationException($"O Gree retornou o código de erro: {result}.");
+        }
     }
 }

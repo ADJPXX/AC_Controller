@@ -1,6 +1,4 @@
-﻿using System.IO;
-
-namespace AC_Controller.Services;
+﻿namespace AC_Controller.Services;
 
 public static class GreeResources
 {

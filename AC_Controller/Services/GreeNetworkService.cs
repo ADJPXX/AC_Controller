@@ -11,50 +11,33 @@ public sealed class GreeNetworkService
     public GreeNetworkService()
     {
         if (!IPAddress.TryParse(
-                GreeResources.Ip,
-                out IPAddress? ip))
+                GreeResources.Ip, out var ip))
         {
-            throw new InvalidOperationException(
-                $"IP inválido: {GreeResources.Ip}");
+            throw new InvalidOperationException($"IP inválido: {GreeResources.Ip}");
         }
 
         _ip = ip;
     }
 
-    public async Task<string> SendAsync(
-        string request)
+    public async Task<string> SendAsync(string request)
     {
-        using var client =
-            new UdpClient();
+        using var client = new UdpClient();
 
-        byte[] data =
-            Encoding.UTF8.GetBytes(request);
+        var data = Encoding.UTF8.GetBytes(request);
 
-        var endpoint =
-            new IPEndPoint(
-                _ip,
-                GreeResources.Port);
+        var endpoint = new IPEndPoint(_ip, GreeResources.Port);
 
-        await client.SendAsync(
-            data,
-            endpoint);
+        await client.SendAsync(data, endpoint);
 
         try
         {
-            UdpReceiveResult response =
-                await client.ReceiveAsync()
-                    .WaitAsync(
-                        TimeSpan.FromSeconds(
-                            GreeResources.ReceiveTimeoutSeconds));
+            var response = await client.ReceiveAsync().WaitAsync(TimeSpan.FromSeconds(GreeResources.ReceiveTimeoutSeconds));
 
-            return Encoding.UTF8.GetString(
-                response.Buffer);
+            return Encoding.UTF8.GetString(response.Buffer);
         }
         catch (TimeoutException)
         {
-            throw new TimeoutException(
-                $"O Gree não respondeu dentro de " +
-                $"{GreeResources.ReceiveTimeoutSeconds} segundos.");
+            throw new TimeoutException($"O Gree não respondeu dentro de " + $"{GreeResources.ReceiveTimeoutSeconds} segundos.");
         }
     }
 }
