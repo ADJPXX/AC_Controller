@@ -13,23 +13,9 @@ public static class MenuService
         {
             var status = await greeService.GetStatusAsync();
 
-            if (status.IsPoweredOn)
-            {
-                _onOff = "SIM";
-            }
-            else
-            {
-                _onOff = "NÃO";
-            }
+            _onOff = status.IsPoweredOn ? "SIM" : "NÃO";
 
-            if (status.Mod == 4)
-            {
-                _modo = "Quente";
-            }
-            else
-            {
-                _modo = "Frio";
-            }
+            _modo = status.Mod == 4 ? "Quente" : "Frio";
 
             Console.WriteLine(new string('-', 30));
             Console.WriteLine($"LIGADO: {_onOff}");
