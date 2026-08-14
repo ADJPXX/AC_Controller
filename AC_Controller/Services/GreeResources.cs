@@ -50,7 +50,7 @@ public static class GreeResources
 
         if (!File.Exists(path))
         {
-            throw new FileNotFoundException("\"DeviceKey.txt\" not found");
+            File.Create(path).Close();
         }
 
         return File.ReadAllText(path).Trim();

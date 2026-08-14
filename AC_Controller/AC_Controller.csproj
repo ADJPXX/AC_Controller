@@ -6,6 +6,11 @@
         <RootNamespace>AC_Controller</RootNamespace>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
+
+        <DebugType>None</DebugType>
+        <DebugSymbols>false</DebugSymbols>
+
+        <ApplicationIcon>Resources\accontroller.ico</ApplicationIcon>
   </PropertyGroup>
 
 </Project>
