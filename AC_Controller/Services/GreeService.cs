@@ -101,6 +101,8 @@ public sealed class GreeService
 
     public Task SetWindSpeedAsync(int speed)
     {
+        int tur;
+
         if (speed is < 0 or > 6)
         {
             throw new ArgumentOutOfRangeException(nameof(speed), "A velocidade deve estar entre 1 e 6.");
@@ -108,11 +110,14 @@ public sealed class GreeService
 
         if (speed == 6)
         {
-            const int tur = 1;
-
+            tur = 1;
+            speed = 1;
+            _ = SendCommandAsync(["SetWdSpd"], [speed]);
             return SendCommandAsync(["Tur"], [tur]);
         }
 
+        tur = 0;
+        _ = SendCommandAsync(["Tur"], [tur]);
         return SendCommandAsync(["SetWdSpd"], [speed]);
     }
 
