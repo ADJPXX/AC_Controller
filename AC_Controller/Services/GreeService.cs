@@ -67,15 +67,9 @@ public sealed class GreeService
 
     private async Task SetPowerAsync(bool power)
     {
-        var commandPack = $$"""{"opt":["Pow"],"p":[{{(power ? 1 : 0)}}],"t":"cmd"}""";
+        var onOff = power ? 1 : 0;
 
-        var encrypted = _crypto.Encrypt(commandPack);
-
-        var request = CreateRequest(encrypted, 0);
-
-        var response = await _network.SendAsync(request);
-
-        ValidateCommandResponse(response);
+        await SendCommandAsync(["Pow"], [onOff]);
     }
 
 
@@ -99,11 +93,11 @@ public sealed class GreeService
     }
 
 
-    public Task SetWindSpeedAsync(int speed)
+    public async Task SetWindSpeedAsync(int speed)
     {
         int tur;
 
-        if (speed is < 0 or > 6)
+        if (speed is < 1 or > 6)
         {
             throw new ArgumentOutOfRangeException(nameof(speed), "A velocidade deve estar entre 1 e 6.");
         }
@@ -112,13 +106,29 @@ public sealed class GreeService
         {
             tur = 1;
             speed = 1;
-            _ = SendCommandAsync(["SetWdSpd"], [speed]);
-            return SendCommandAsync(["Tur"], [tur]);
+
+            await SendCommandAsync(["WdSpd"], [speed]);
+            await SendCommandAsync(["Tur"], [tur]);
+
+            return;
         }
 
         tur = 0;
-        _ = SendCommandAsync(["Tur"], [tur]);
-        return SendCommandAsync(["SetWdSpd"], [speed]);
+
+        await SendCommandAsync(["Tur"], [tur]);
+        await SendCommandAsync(["WdSpd"], [speed]);
+    }
+
+
+    public Task SetFinDirectionAsync(int direction)
+    {
+        if (direction is < 1 or > 6)
+        {
+            throw new ArgumentOutOfRangeException(nameof(direction), "A velocidade deve estar entre 1 e 6.");
+        }
+
+        return SendCommandAsync(["SwUpDn"], [direction]);
+
     }
 
 

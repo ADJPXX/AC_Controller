@@ -3,8 +3,10 @@
 public static class MenuService
 {
     private static string _onOff = "";
-    private static string _modo = "";
-    private static string _velocidade = "";
+    private static string _mode = "";
+    private static string _speed = "";
+    private static string _finDirection = "";
+    private static string _warning = string.Empty;
 
     public static async Task Menu()
     {
@@ -16,35 +18,47 @@ public static class MenuService
 
             _onOff = status.IsPoweredOn ? "Ligado" : "Desligado";
 
-            _modo = status.Mod == 4 ? "Quente" : "Frio";
+            _mode = status.Mod == 4 ? "Quente" : "Frio";
 
             if (status.Tur == 1)
             {
-                _velocidade = "Forte";
+                _speed = "Forte";
             }
 
-            _velocidade = status.WdSpd switch
+            _speed = status.WdSpd switch
             {
                 1 when status.Tur != 1 => "Baixo",
                 2 => "Médio-baixo",
                 3 => "Médio",
                 4 => "Médio-alto",
                 5 => "Alto",
-                _ => _velocidade
+                _ => _speed
             };
 
+            _finDirection = status.SwUpDn switch
+            {
+                1 => "Ficar mudando de direção",
+                2 => "Direção 1",
+                3 => "Direção 2",
+                4 => "Direção 3",
+                5 => "Direção 4",
+                6 => "Direção 5",
+                _ => _finDirection
+            };
+            
             Console.WriteLine(new string('-', 30));
             Console.WriteLine($"AR CONDICIONADO: {_onOff}");
             if (status.IsPoweredOn)
             {
-                Console.WriteLine($"MODO: {_modo}");
+                Console.WriteLine($"MODO: {_mode}");
                 Console.WriteLine($"TEMPERATURA: {status.SetTem}");
-                Console.WriteLine($"VELOCIDADE: {_velocidade}");
+                Console.WriteLine($"VELOCIDADE: {_speed}");
+                Console.WriteLine($"DIREÇÃO DAS ALETAS: {_finDirection}");
             }
             Console.WriteLine(new string('-', 30));
 
             var option = ReadInt(
-                "\n[ 0 ]Sair\n[ 1 ]Ligar/Desligar\n[ 2 ]Quente\n[ 3 ]Frio\n[ 4 ]Mudar temperatura\n[ 5 ]Mudar velocidade do vento\n[ 6 ]Mudar direção das aletas\nEscolha sua opção: ");
+                "[ 0 ]Sair\n[ 1 ]Ligar/Desligar\n[ 2 ]Quente\n[ 3 ]Frio\n[ 4 ]Mudar temperatura\n[ 5 ]Mudar velocidade do vento\n[ 6 ]Mudar direção das aletas\nEscolha sua opção: ");
 
             Console.Clear();
 
@@ -108,6 +122,15 @@ public static class MenuService
                     break;
                 }
 
+                case 6:
+                {
+                    var finDirection = FinDirectionMenu();
+
+                    await greeService.SetFinDirectionAsync(finDirection);
+
+                    break;
+                }
+
                 default:
                 {
                     Console.WriteLine("Opção inválida, tente novamente!");
@@ -153,6 +176,31 @@ public static class MenuService
 
             Console.WriteLine("Número inválido, tente novamente.");
 
+        }
+    }
+
+
+    private static int FinDirectionMenu()
+    {
+        while (true)
+        {
+            Console.WriteLine("[ 1 ]Direção 1\n[ 2 ]Direção 2\n[ 3 ]Direção 3\n[ 4 ]Direção 4\n[ 5 ]Direção 5\n[ 6 ]Ficar mudando de direção");
+
+            var option = ReadInt("Escolha sua opção: ");
+
+            if (option is >= 1 and <= 6)
+            {
+                if (option == 6)
+                {
+                    return option - 5;
+                }
+
+                return option + 1;
+            }
+
+            Console.Clear();
+
+            Console.WriteLine("Número inválido, digite novamente.");
         }
     }
 
