@@ -27,7 +27,7 @@ jobs:
 
       - name: Publicar projeto
         run: |
-          dotnet publish ./AC_Controller/AC_Controller/AC_Controller.csproj `
+          dotnet publish ./AC_Controller/AC_Controller.csproj `
             -c Release `
             -r win-x64 `
             --self-contained true `
