@@ -2,7 +2,7 @@
 
 public class Config
 {
-    public string? DeviceKey { get; set; }
+    public string? DeviceKey { get; init; }
 
-    public bool StartWithWindows { get; set; }
+    public bool StartWithWindows { get; init; }
 }

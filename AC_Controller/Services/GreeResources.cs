@@ -1,7 +1,4 @@
-﻿using System.IO;
-using AC_Controller.Models;
-
-namespace AC_Controller.Services;
+﻿namespace AC_Controller.Services;
 
 public static class GreeResources
 {
@@ -14,8 +11,6 @@ public static class GreeResources
     public const int Port = 7000;
 
     public const int ReceiveTimeoutSeconds = 5;
-
-    public static readonly string DeviceKey = GetDeviceKey();
 
     public static readonly byte[] GcmIv =
     [
@@ -42,10 +37,4 @@ public static class GreeResources
         "TemUn",
         "SvSt"
     ];
-
-
-    private static string GetDeviceKey(Config config)
-    {
-        return config.DeviceKey;
-    }
 }

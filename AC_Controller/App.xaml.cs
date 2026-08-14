@@ -16,7 +16,8 @@ public partial class App
     private TaskbarIcon? _trayIcon;
     private bool _isConnected;
     private Stream? _iconStream;
-    public Config? _config;
+    private Config? _config;
+    private readonly StartupService _startupService = new();
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -24,9 +25,11 @@ public partial class App
 
         _config = ConfigService.ReadJson();
 
+        _startupService.TaskVerification(_config);
+
         try
         {
-            _greeService = new GreeService();
+            _greeService = new GreeService(_config);
 
             _iconStream = typeof(App).Assembly.GetManifestResourceStream(
                               "AC_Controller.Resources.accontroller.ico")
@@ -107,7 +110,7 @@ public partial class App
             return;
         }
 
-        _trayIcon.ToolTipText =
+        _trayIcon?.ToolTipText =
             _status.IsPoweredOn
                 ? $"AC Controller - Ligado ({_status.SetTem}°C)"
                 : "AC Controller - Desligado";

@@ -8,12 +8,14 @@ public sealed class GreeCryptoService
 {
     private readonly string _deviceKey;
 
-    public GreeCryptoService()
+    public GreeCryptoService(Config config)
     {
-        if (string.IsNullOrWhiteSpace(GreeResources.DeviceKey))
-            throw new InvalidOperationException("Device Key não configurada.");
+        if (string.IsNullOrWhiteSpace(config.DeviceKey) || config.DeviceKey == "YOUR_DEVICE_KEY_HERE")
+        {
+            throw new InvalidOperationException("DeviceKey não configurada.");
+        }
 
-        _deviceKey = GreeResources.DeviceKey;
+        _deviceKey = config.DeviceKey;
     }
 
     public GcmResult Encrypt(string plaintext)

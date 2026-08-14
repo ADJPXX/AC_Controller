@@ -3,9 +3,9 @@ using AC_Controller.Models;
 
 namespace AC_Controller.Services;
 
-public sealed class GreeService
+public sealed class GreeService(Config config)
 {
-    private readonly GreeCryptoService _crypto = new();
+    private readonly GreeCryptoService _crypto = new(config);
     private readonly GreeNetworkService _network = new();
 
 
