@@ -5,8 +5,8 @@ namespace AC_Controller.Services;
 
 public sealed class GreeService
 {
-    private readonly GreeNetworkService _network = new();
     private readonly GreeCryptoService _crypto = new();
+    private readonly GreeNetworkService _network = new();
 
 
     public async Task<GreeStatus> GetStatusAsync()
@@ -24,28 +24,18 @@ public sealed class GreeService
         var root = document.RootElement;
 
         if (!root.TryGetProperty("pack", out var packElement))
-        {
             throw new InvalidOperationException("A resposta do Gree não contém 'pack'.");
-        }
 
         if (!root.TryGetProperty("tag", out var tagElement))
-        {
             throw new InvalidOperationException("A resposta do Gree não contém 'tag'.");
-        }
 
         var pack = packElement.GetString() ?? string.Empty;
 
         var tag = tagElement.GetString() ?? string.Empty;
 
-        if (string.IsNullOrWhiteSpace(pack))
-        {
-            throw new InvalidOperationException("O Gree retornou um 'pack' vazio.");
-        }
+        if (string.IsNullOrWhiteSpace(pack)) throw new InvalidOperationException("O Gree retornou um 'pack' vazio.");
 
-        if (string.IsNullOrWhiteSpace(tag))
-        {
-            throw new InvalidOperationException("O Gree retornou uma 'tag' vazia.");
-        }
+        if (string.IsNullOrWhiteSpace(tag)) throw new InvalidOperationException("O Gree retornou uma 'tag' vazia.");
 
         var decryptedResponse = _crypto.Decrypt(pack, tag);
 
@@ -75,10 +65,7 @@ public sealed class GreeService
 
     public Task SetModeAsync(int mode)
     {
-        if (mode is < 0 or > 4)
-        {
-            throw new ArgumentOutOfRangeException(nameof(mode), "O modo deve estar entre 0 e 4.");
-        }
+        if (mode is < 0 or > 4) throw new ArgumentOutOfRangeException(nameof(mode), "O modo deve estar entre 0 e 4.");
 
         return SendCommandAsync(["Mod"], [mode]);
     }
@@ -98,9 +85,7 @@ public sealed class GreeService
         int tur;
 
         if (speed is < 1 or > 6)
-        {
             throw new ArgumentOutOfRangeException(nameof(speed), "A velocidade deve estar entre 1 e 6.");
-        }
 
         if (speed == 6)
         {
@@ -123,12 +108,9 @@ public sealed class GreeService
     public Task SetFinDirectionAsync(int direction)
     {
         if (direction is < 1 or > 6)
-        {
-            throw new ArgumentOutOfRangeException(nameof(direction), "A velocidade deve estar entre 1 e 6.");
-        }
+            throw new ArgumentOutOfRangeException(nameof(direction), "A direção deve estar entre 1 e 6.");
 
         return SendCommandAsync(["SwUpDn"], [direction]);
-
     }
 
 
@@ -160,7 +142,8 @@ public sealed class GreeService
 
     private static string CreateRequest(GcmResult encrypted, int id)
     {
-        return $$"""{"cid":"app","i":{{id}},"t":"pack","uid":0,"tcid":"{{GreeResources.Mac}}","tag":"{{encrypted.Tag}}","pack":"{{encrypted.Pack}}"}""";
+        return
+            $$"""{"cid":"app","i":{{id}},"t":"pack","uid":0,"tcid":"{{GreeResources.Mac}}","tag":"{{encrypted.Tag}}","pack":"{{encrypted.Pack}}"}""";
     }
 
 
@@ -171,30 +154,22 @@ public sealed class GreeService
         var root = document.RootElement;
 
         if (!root.TryGetProperty("cols", out var colsElement))
-        {
             throw new InvalidOperationException("A resposta do Gree não contém 'cols'.");
-        }
 
         if (!root.TryGetProperty("dat", out var datElement))
-        {
             throw new InvalidOperationException("A resposta do Gree não contém 'dat'.");
-        }
 
         var columns = colsElement.EnumerateArray().Select(x => x.GetString() ?? string.Empty).ToArray();
 
         var values = datElement.EnumerateArray().ToArray();
 
         if (columns.Length != values.Length)
-        {
-            throw new InvalidOperationException("A quantidade de colunas recebidas não corresponde à quantidade de valores.");
-        }
+            throw new InvalidOperationException(
+                "A quantidade de colunas recebidas não corresponde à quantidade de valores.");
 
         Dictionary<string, JsonElement> data = new();
 
-        for (var i = 0; i < columns.Length; i++)
-        {
-            data[columns[i]] = values[i];
-        }
+        for (var i = 0; i < columns.Length; i++) data[columns[i]] = values[i];
 
         return new GreeStatus
         {
@@ -204,16 +179,18 @@ public sealed class GreeService
             WdSpd = data["WdSpd"].GetInt32(), // VELOCIDADE DO VENTO, VARIA DE 1 ATÉ 5 (1 SE "Tur" ESTIVER LIGADO)
             Blo = data["Blo"].GetInt32(), // FUNÇÃO "Seca"
             Health = data["Health"].GetInt32(), // FUNÇÃO "Saude"
-            SwhSlp  = data["SwhSlp"].GetInt32(), // FUNÇÃO "Sono"
+            SwhSlp = data["SwhSlp"].GetInt32(), // FUNÇÃO "Sono"
             Lig = data["Lig"].GetInt32(), // LED (0, 1)
-            SwingLfRig = data["SwingLfRig"].GetInt32(), // DIREÇÃO DAS ALETAS (HORIZONTAL) - VALOR MINIMO 2 E VALOR MAXIMO 6, SENDO RESPECTIVAMENTE DIREÇÃO 1 E DIREÇÃO 5 (VALOR 1 FICA MUDANDO DE DIREÇÃO
-            SwUpDn = data["SwUpDn"].GetInt32(), // DIREÇÃO DAS ALETAS (VERTICAL) - VALOR MINIMO 2 E VALOR MAXIMO 6, SENDO RESPECTIVAMENTE DIREÇÃO 1 E DIREÇÃO 5 (VALOR 1 FICA MUDANDO DE DIREÇÃO
+            SwingLfRig =
+                data["SwingLfRig"]
+                    .GetInt32(), // DIREÇÃO DAS ALETAS (HORIZONTAL) - VALOR MINIMO 2 E VALOR MAXIMO 6, SENDO RESPECTIVAMENTE DIREÇÃO 1 E DIREÇÃO 5 (VALOR 1 FICA MUDANDO DE DIREÇÃO
+            SwUpDn = data["SwUpDn"]
+                .GetInt32(), // DIREÇÃO DAS ALETAS (VERTICAL) - VALOR MINIMO 2 E VALOR MAXIMO 6, SENDO RESPECTIVAMENTE DIREÇÃO 1 E DIREÇÃO 5 (VALOR 1 FICA MUDANDO DE DIREÇÃO
             Quiet = data["Quiet"].GetInt32(), // VALOR 2 SE A FUNÇÃO "Silen" ATIVADA E 0 SE DESATIVADO.
             Tur = data["Tur"].GetInt32(), // VELOCIDADE DO VENTO "Forte" (0, 1)
             StHt = data["StHt"].GetInt32(), // FUNÇÃO "Aquecimento"
             TemUn = data["TemUn"].GetInt32(), // Mostra graus celsius e graus fahrenheit (0, 1)
             SvSt = data["SvSt"].GetInt32() // FUNÇÃO "Poup" (POUPANÇA/POUPAR)
-
         };
     }
 
@@ -225,22 +202,16 @@ public sealed class GreeService
         var root = document.RootElement;
 
         if (!root.TryGetProperty("pack", out var packElement))
-        {
             throw new InvalidOperationException("A resposta do Gree não contém 'pack'.");
-        }
 
         if (!root.TryGetProperty("tag", out var tagElement))
-        {
             throw new InvalidOperationException("A resposta do Gree não contém 'tag'.");
-        }
 
         var pack = packElement.GetString() ?? string.Empty;
         var tag = tagElement.GetString() ?? string.Empty;
 
         if (string.IsNullOrWhiteSpace(pack) || string.IsNullOrWhiteSpace(tag))
-        {
             throw new InvalidOperationException("O Gree retornou uma resposta inválida.");
-        }
 
         var decryptedResponse = _crypto.Decrypt(pack, tag);
 
@@ -249,15 +220,10 @@ public sealed class GreeService
         var decryptedRoot = decryptedDocument.RootElement;
 
         if (!decryptedRoot.TryGetProperty("r", out var resultElement))
-        {
             throw new InvalidOperationException("A resposta descriptografada do Gree não contém 'r'.");
-        }
 
         var result = resultElement.GetInt32();
 
-        if (result != 200)
-        {
-            throw new InvalidOperationException($"O Gree retornou o código de erro: {result}.");
-        }
+        if (result != 200) throw new InvalidOperationException($"O Gree retornou o código de erro: {result}.");
     }
 }

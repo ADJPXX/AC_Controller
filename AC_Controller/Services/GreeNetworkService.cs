@@ -12,9 +12,7 @@ public sealed class GreeNetworkService
     {
         if (!IPAddress.TryParse(
                 GreeResources.Ip, out var ip))
-        {
             throw new InvalidOperationException($"IP inválido: {GreeResources.Ip}");
-        }
 
         _ip = ip;
     }
@@ -31,13 +29,15 @@ public sealed class GreeNetworkService
 
         try
         {
-            var response = await client.ReceiveAsync().WaitAsync(TimeSpan.FromSeconds(GreeResources.ReceiveTimeoutSeconds));
+            var response = await client.ReceiveAsync()
+                .WaitAsync(TimeSpan.FromSeconds(GreeResources.ReceiveTimeoutSeconds));
 
             return Encoding.UTF8.GetString(response.Buffer);
         }
         catch (TimeoutException)
         {
-            throw new TimeoutException($"O Gree não respondeu dentro de " + $"{GreeResources.ReceiveTimeoutSeconds} segundos.");
+            throw new TimeoutException($"O Gree não respondeu dentro de " +
+                                       $"{GreeResources.ReceiveTimeoutSeconds} segundos.");
         }
     }
 }
