@@ -15,26 +15,47 @@ public partial class App
     private GreeStatus? _status;
     private TaskbarIcon? _trayIcon;
     private bool _isConnected;
+    private Stream? _iconStream;
+    private Config? _config;
+    private readonly StartupService _startupService = new();
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
-        _greeService = new GreeService();
+        _config = ConfigService.ReadJson();
 
-        _trayIcon = new TaskbarIcon
+        _startupService.TaskVerification(_config);
+
+        try
         {
-            Icon = new Icon(
-                Path.Combine(
-                    AppDomain.CurrentDomain.BaseDirectory,
-                    "Resources",
-                    "accontroller.ico")),
+            _greeService = new GreeService(_config);
 
-            ToolTipText = "AC Controller"
-        };
+            _iconStream = typeof(App).Assembly.GetManifestResourceStream(
+                              "AC_Controller.Resources.accontroller.ico")
+                          ?? throw new InvalidOperationException(
+                              "Não foi possível carregar o ícone incorporado.");
 
-        _ = UpdateStatusAsync();
+            _trayIcon = new TaskbarIcon
+            {
+                Icon = new Icon(_iconStream),
+                ToolTipText = "AC Controller"
+            };
+
+            _ = UpdateStatusAsync();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                ex.ToString(),
+                "AC Controller",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+
+            Shutdown();
+        }
     }
+
 
     private async Task UpdateStatusAsync()
     {
@@ -89,7 +110,7 @@ public partial class App
             return;
         }
 
-        _trayIcon.ToolTipText =
+        _trayIcon?.ToolTipText =
             _status.IsPoweredOn
                 ? $"AC Controller - Ligado ({_status.SetTem}°C)"
                 : "AC Controller - Desligado";
@@ -430,6 +451,7 @@ public partial class App
     protected override void OnExit(ExitEventArgs e)
     {
         _trayIcon?.Dispose();
+        _iconStream?.Dispose();
 
         base.OnExit(e);
     }

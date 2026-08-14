@@ -1,6 +1,4 @@
-﻿using System.IO;
-
-namespace AC_Controller.Services;
+﻿namespace AC_Controller.Services;
 
 public static class GreeResources
 {
@@ -13,8 +11,6 @@ public static class GreeResources
     public const int Port = 7000;
 
     public const int ReceiveTimeoutSeconds = 5;
-
-    public static readonly string DeviceKey = GetDeviceKey();
 
     public static readonly byte[] GcmIv =
     [
@@ -41,14 +37,4 @@ public static class GreeResources
         "TemUn",
         "SvSt"
     ];
-
-
-    private static string GetDeviceKey()
-    {
-        var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DeviceKey.txt");
-
-        if (!File.Exists(path)) File.Create(path).Close();
-
-        return File.ReadAllText(path).Trim();
-    }
 }
