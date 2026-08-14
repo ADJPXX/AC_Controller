@@ -11,9 +11,7 @@ public sealed class GreeCryptoService
     public GreeCryptoService()
     {
         if (string.IsNullOrWhiteSpace(GreeResources.DeviceKey))
-        {
             throw new InvalidOperationException("Device Key não configurada.");
-        }
 
         _deviceKey = GreeResources.DeviceKey;
     }

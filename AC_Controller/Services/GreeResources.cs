@@ -1,4 +1,6 @@
-﻿namespace AC_Controller.Services;
+﻿using System.IO;
+
+namespace AC_Controller.Services;
 
 public static class GreeResources
 {
@@ -6,13 +8,13 @@ public static class GreeResources
 
     public const string Mac = "9424b8844011";
 
-    public static readonly string DeviceKey = GetDeviceKey();
-
     public const string GcmAad = "qualcomm-test";
 
     public const int Port = 7000;
 
     public const int ReceiveTimeoutSeconds = 5;
+
+    public static readonly string DeviceKey = GetDeviceKey();
 
     public static readonly byte[] GcmIv =
     [
@@ -48,10 +50,7 @@ public static class GreeResources
     {
         var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DeviceKey.txt");
 
-        if (!File.Exists(path))
-        {
-            File.Create(path).Close();
-        }
+        if (!File.Exists(path)) File.Create(path).Close();
 
         return File.ReadAllText(path).Trim();
     }
