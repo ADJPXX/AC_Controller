@@ -2,6 +2,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using AC_Controller.Models;
 using AC_Controller.Services;
 using Hardcodet.Wpf.TaskbarNotification;
@@ -13,6 +14,7 @@ public partial class App
     private GreeService? _greeService;
     private GreeStatus? _status;
     private TaskbarIcon? _trayIcon;
+    private bool _isConnected;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -42,12 +44,15 @@ public partial class App
             {
                 _status = await _greeService!.GetStatusAsync();
 
-                await Dispatcher.InvokeAsync(
-                    UpdateTrayMenu);
+                _isConnected = true;
+
+                await Dispatcher.InvokeAsync(UpdateTrayMenu);
             }
             catch
             {
-                // Não derruba o programa caso o ar não responda.
+                _isConnected = false;
+
+                await Dispatcher.InvokeAsync(UpdateTrayMenu);
             }
 
             await Task.Delay(3000);
@@ -57,6 +62,38 @@ public partial class App
 
     private void UpdateTrayMenu()
     {
+        if (!_isConnected || _status is null)
+        {
+            _trayIcon!.ToolTipText = "AC Controller - Sem conexão";
+
+            _trayIcon.ContextMenu = new ContextMenu
+            {
+                Items =
+                {
+                    new MenuItem
+                    {
+                        Header = "Ar-condicionado desconectado",
+                        IsEnabled = false
+                    },
+
+                    new Separator(),
+
+                    new MenuItem
+                    {
+                        Header = "Sair",
+                        Command = ApplicationCommands.Close
+                    }
+                }
+            };
+
+            return;
+        }
+
+        _trayIcon.ToolTipText =
+            _status.IsPoweredOn
+                ? $"AC Controller - Ligado ({_status.SetTem}°C)"
+                : "AC Controller - Desligado";
+
         if (_trayIcon == null || _status == null)
             return;
 

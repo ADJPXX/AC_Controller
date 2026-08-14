@@ -29,7 +29,6 @@ public static class GreeResources
         "Mod",
         "SetTem",
         "WdSpd",
-        "Air",
         "Blo",
         "Health",
         "SwhSlp",
@@ -40,8 +39,6 @@ public static class GreeResources
         "Tur",
         "StHt",
         "TemUn",
-        "HeatCoolType",
-        "TemRec",
         "SvSt"
     ];
 

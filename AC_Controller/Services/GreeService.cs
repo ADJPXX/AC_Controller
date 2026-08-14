@@ -108,7 +108,7 @@ public sealed class GreeService
     public Task SetFinDirectionAsync(int direction)
     {
         if (direction is < 1 or > 6)
-            throw new ArgumentOutOfRangeException(nameof(direction), "A velocidade deve estar entre 1 e 6.");
+            throw new ArgumentOutOfRangeException(nameof(direction), "A direção deve estar entre 1 e 6.");
 
         return SendCommandAsync(["SwUpDn"], [direction]);
     }
