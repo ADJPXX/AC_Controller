@@ -6,7 +6,7 @@ public static class MenuService
     private static string _mode = "";
     private static string _speed = "";
     private static string _finDirection = "";
-    private static string _warning = string.Empty;
+    private static readonly string Lines = new('-', 30);
 
     public static async Task Menu()
     {
@@ -45,26 +45,66 @@ public static class MenuService
                 6 => "Direção 5",
                 _ => _finDirection
             };
-            
-            Console.WriteLine(new string('-', 30));
-            Console.WriteLine($"AR CONDICIONADO: {_onOff}");
+
+            var menu = $"""
+                         {Lines}
+                         AR CONDICIONADO: {_onOff}
+                         """;
+
             if (status.IsPoweredOn)
             {
-                Console.WriteLine($"MODO: {_mode}");
-                Console.WriteLine($"TEMPERATURA: {status.SetTem}");
-                Console.WriteLine($"VELOCIDADE: {_speed}");
-                Console.WriteLine($"DIREÇÃO DAS ALETAS: {_finDirection}");
+                menu += $"""
+                         
+                         MODO: {_mode}
+                         TEMPERATURA: {status.SetTem}
+                         VELOCIDADE: {_speed}
+                         DIREÇÃO DAS ALETAS: {_finDirection}
+                         """;
             }
-            Console.WriteLine(new string('-', 30));
 
-            var option = ReadInt(
-                "[ 0 ]Sair\n[ 1 ]Ligar/Desligar\n[ 2 ]Quente\n[ 3 ]Frio\n[ 4 ]Mudar temperatura\n[ 5 ]Mudar velocidade do vento\n[ 6 ]Mudar direção das aletas\nEscolha sua opção: ");
+            menu += $"\n{Lines}\n";
+
+            menu += """
+                       [ 0 ]Sair
+                       [ 1 ]Ligar/Desligar
+                       """;
+
+            if (status.IsPoweredOn)
+            {
+                menu += """
+                        
+                        [ 2 ]Quente
+                        [ 3 ]Frio
+                        [ 4 ]Mudar temperatura
+                        [ 5 ]Mudar velocidade do vento
+                        [ 6 ]Mudar direção das aletas
+                        """;
+            }
+
+            menu += "\nEscolha sua opção: ";
+
+            var option = ReadInt(menu);
 
             Console.Clear();
+
+            if (option == -1)
+            {
+                Console.Clear();
+
+                Console.WriteLine("Opção inválida, tente novamente.");
+
+                continue;
+            }
 
             if (option == 0)
             {
                 break;
+            }
+
+            if (!status.IsPoweredOn && option is >= 2 and <= 6)
+            {
+                Console.WriteLine("O ar condicionado está desligado, ligue ele para que você consiga executar qualquer comando.");
+                continue;
             }
 
             switch (option)
@@ -147,8 +187,19 @@ public static class MenuService
         {
             var temp = ReadInt("Digite uma temperatura entre 16 e 30°C: ");
 
+            if (temp == -1)
+            {
+                Console.Clear();
+
+                Console.WriteLine("Temperatura inválida, tente novamente.");
+
+                continue;
+            }
+
             if (temp is >= 16 and <= 30)
             {
+                Console.Clear();
+
                 return temp;
             }
 
@@ -167,8 +218,19 @@ public static class MenuService
 
             var option = ReadInt("Digite a velocidade do vento: ");
 
+            if (option == -1)
+            {
+                Console.Clear();
+
+                Console.WriteLine("Velocidade inválida, tente novamente.");
+
+                continue;
+            }
+
             if (option is >= 1 and <= 6)
             {
+                Console.Clear();
+
                 return option;
             }
 
@@ -188,12 +250,25 @@ public static class MenuService
 
             var option = ReadInt("Escolha sua opção: ");
 
+            if (option == -1)
+            {
+                Console.Clear();
+
+                Console.WriteLine("Opção inválida, tente novamente.");
+
+                continue;
+            }
+
             if (option is >= 1 and <= 6)
             {
                 if (option == 6)
                 {
+                    Console.Clear();
+
                     return option - 5;
                 }
+
+                Console.Clear();
 
                 return option + 1;
             }
@@ -209,19 +284,13 @@ public static class MenuService
     {
         while (true)
         {
-            try
+            Console.Write(msg);
+            if (int.TryParse(Console.ReadLine(), out var result))
             {
-                Console.Write(msg);
-                if (int.TryParse(Console.ReadLine(), out var result))
-                {
-                    return result;
-                }
+                return result;
             }
 
-            catch
-            {
-                // ignored
-            }
+            return -1;
         }
     }
 }
