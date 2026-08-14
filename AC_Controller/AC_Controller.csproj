@@ -6,7 +6,6 @@
         <RootNamespace>AC_Controller</RootNamespace>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
-      <UserSecretsId>0ee3b768-630d-4362-ac65-fefd2a07ee6e</UserSecretsId>
   </PropertyGroup>
 
 </Project>

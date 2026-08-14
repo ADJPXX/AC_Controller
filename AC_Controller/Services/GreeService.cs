@@ -58,10 +58,12 @@ public sealed class GreeService
         return SetPowerAsync(true);
     }
 
+
     public Task TurnOffAsync()
     {
         return SetPowerAsync(false);
     }
+
 
     private async Task SetPowerAsync(bool power)
     {
@@ -97,6 +99,24 @@ public sealed class GreeService
     }
 
 
+    public Task SetWindSpeedAsync(int speed)
+    {
+        if (speed is < 0 or > 6)
+        {
+            throw new ArgumentOutOfRangeException(nameof(speed), "A velocidade deve estar entre 1 e 6.");
+        }
+
+        if (speed == 6)
+        {
+            const int tur = 1;
+
+            return SendCommandAsync(["Tur"], [tur]);
+        }
+
+        return SendCommandAsync(["SetWdSpd"], [speed]);
+    }
+
+
     private async Task SendCommandAsync(string[] options, int[] values)
     {
         var optionsJson = string.Join(",", options.Select(option => $"\"{option}\""));
@@ -122,10 +142,12 @@ public sealed class GreeService
         return $$"""{"cols":[{{columns}}],"mac":"{{GreeResources.Mac}}","t":"status"}""";
     }
 
+
     private static string CreateRequest(GcmResult encrypted, int id)
     {
         return $$"""{"cid":"app","i":{{id}},"t":"pack","uid":0,"tcid":"{{GreeResources.Mac}}","tag":"{{encrypted.Tag}}","pack":"{{encrypted.Pack}}"}""";
     }
+
 
     private static GreeStatus ParseStatusResponse(string decryptedResponse)
     {
@@ -161,14 +183,22 @@ public sealed class GreeService
 
         return new GreeStatus
         {
-            Pow = data["Pow"].GetInt32(),
-            Mod = data["Mod"].GetInt32(),
-            SetTem = data["SetTem"].GetInt32(),
-            TemRec = data["TemRec"].GetInt32(),
-            Tur = data["Tur"].GetInt32(),
-            Quiet = data["Quiet"].GetInt32(),
-            SvSt = data["SvSt"].GetInt32(),
-            Lig = data["Lig"].GetInt32()
+            Pow = data["Pow"].GetInt32(), // AR CONDICIONADO LIGADO OU DESLIGADO (0, 1)
+            Mod = data["Mod"].GetInt32(), // MODO: 0 AUTO - 1 ARRE/FRIO - 2 DES - 3 AR - 4 AQUECIMENTO
+            SetTem = data["SetTem"].GetInt32(), // TEMPERATURA
+            WdSpd = data["WdSpd"].GetInt32(), // VELOCIDADE DO VENTO, VARIA DE 1 ATÉ 5 (1 SE "Tur" ESTIVER LIGADO)
+            Blo = data["Blo"].GetInt32(), // FUNÇÃO "Seca"
+            Health = data["Health"].GetInt32(), // FUNÇÃO "Saude"
+            SwhSlp  = data["SwhSlp"].GetInt32(), // FUNÇÃO "Sono"
+            Lig = data["Lig"].GetInt32(), // LED (0, 1)
+            SwingLfRig = data["SwingLfRig"].GetInt32(), // DIREÇÃO DAS ALETAS (HORIZONTAL) - VALOR MINIMO 2 E VALOR MAXIMO 6, SENDO RESPECTIVAMENTE DIREÇÃO 1 E DIREÇÃO 5 (VALOR 1 FICA MUDANDO DE DIREÇÃO
+            SwUpDn = data["SwUpDn"].GetInt32(), // DIREÇÃO DAS ALETAS (VERTICAL) - VALOR MINIMO 2 E VALOR MAXIMO 6, SENDO RESPECTIVAMENTE DIREÇÃO 1 E DIREÇÃO 5 (VALOR 1 FICA MUDANDO DE DIREÇÃO
+            Quiet = data["Quiet"].GetInt32(), // VALOR 2 SE A FUNÇÃO "Silen" ATIVADA E 0 SE DESATIVADO.
+            Tur = data["Tur"].GetInt32(), // VELOCIDADE DO VENTO "Forte" (0, 1)
+            StHt = data["StHt"].GetInt32(), // FUNÇÃO "Aquecimento"
+            TemUn = data["TemUn"].GetInt32(), // Mostra graus celsius e graus fahrenheit (0, 1)
+            SvSt = data["SvSt"].GetInt32() // FUNÇÃO "Poup" (POUPANÇA/POUPAR)
+
         };
     }
 

@@ -10,8 +10,6 @@ public sealed class GreeStatus
 
     public int WdSpd { get; init; }
 
-    public int Air { get; init; }
-
     public int Blo { get; init; }
 
     public int Health { get; init; }
@@ -31,10 +29,6 @@ public sealed class GreeStatus
     public int StHt { get; init; }
 
     public int TemUn { get; init; }
-
-    public int HeatCoolType { get; init; }
-
-    public int TemRec { get; init; }
 
     public int SvSt { get; init; }
 

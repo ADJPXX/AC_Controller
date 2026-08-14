@@ -53,6 +53,6 @@ public static class GreeResources
             throw new FileNotFoundException("\"DeviceKey.txt\" not found");
         }
 
-        return File.ReadAllText(path);
+        return File.ReadAllText(path).Trim();
     }
 }
