@@ -1,4 +1,5 @@
 ﻿using System.IO;
+using AC_Controller.Models;
 
 namespace AC_Controller.Services;
 
@@ -43,12 +44,8 @@ public static class GreeResources
     ];
 
 
-    private static string GetDeviceKey()
+    private static string GetDeviceKey(Config config)
     {
-        var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DeviceKey.txt");
-
-        if (!File.Exists(path)) File.Create(path).Close();
-
-        return File.ReadAllText(path).Trim();
+        return config.DeviceKey;
     }
 }
