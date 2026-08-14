@@ -20,21 +20,35 @@ public partial class App
     {
         base.OnStartup(e);
 
-        _greeService = new GreeService();
-
-        _trayIcon = new TaskbarIcon
+        try
         {
-            Icon = new Icon(
-                Path.Combine(
-                    AppDomain.CurrentDomain.BaseDirectory,
-                    "Resources",
-                    "accontroller.ico")),
+            _greeService = new GreeService();
 
-            ToolTipText = "AC Controller"
-        };
+            _trayIcon = new TaskbarIcon
+            {
+                Icon = new Icon(
+                    Path.Combine(
+                        AppDomain.CurrentDomain.BaseDirectory,
+                        "Resources",
+                        "accontroller.ico")),
 
-        _ = UpdateStatusAsync();
+                ToolTipText = "AC Controller"
+            };
+
+            _ = UpdateStatusAsync();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                ex.ToString(),
+                "AC Controller",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+
+            Shutdown();
+        }
     }
+
 
     private async Task UpdateStatusAsync()
     {

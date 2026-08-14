@@ -16,8 +16,13 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="Hardcodet.NotifyIcon.Wpf" Version="2.0.1"/>
-        <EmbeddedResource Include="Resources\accontroller.ico"/>
+        <Content Include="Resources\accontroller.ico">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+        </Content>
+
+        <PackageReference Include="Hardcodet.NotifyIcon.Wpf" Version="2.0.1" />
+        <EmbeddedResource Include="Resources\accontroller.ico" />
     </ItemGroup>
 
 </Project>
