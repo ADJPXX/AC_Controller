@@ -1,8 +1,8 @@
-﻿namespace AC_Controller.Models;
+namespace AC_Controller.Models;
 
-public class Config
+public sealed class Config
 {
-    public string? DeviceKey { get; init; }
-
+    public string? DeviceMac { get; init; }
+    public string? LastKnownIp { get; init; }
     public bool StartWithWindows { get; init; }
 }

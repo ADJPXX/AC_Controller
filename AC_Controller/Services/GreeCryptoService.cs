@@ -1,62 +1,111 @@
-﻿using System.Security.Cryptography;
+using System.Security.Cryptography;
 using System.Text;
 using AC_Controller.Models;
 
 namespace AC_Controller.Services;
 
-public sealed class GreeCryptoService
+public static class GreeCryptoService
 {
-    private readonly string _deviceKey;
+    // Bootstrap keys used by the reverse-engineered Gree/EWPE local protocol.
+    private const string GenericEcbKey = "a3K8Bx%2r8Y7#xDh";
+    private const string GenericGcmKey = "{yxAHAY_Lm6pbC/<";
 
-    public GreeCryptoService(Config config)
+    public static GcmResult EncryptDevice(string plaintext, GreeSession session)
     {
-        if (string.IsNullOrWhiteSpace(config.DeviceKey) || config.DeviceKey == "YOUR_DEVICE_KEY_HERE")
-        {
-            throw new InvalidOperationException("DeviceKey não configurada.");
-        }
-
-        _deviceKey = config.DeviceKey;
+        return Encrypt(plaintext, session.DeviceKey, session.EncryptionVersion);
     }
 
-    public GcmResult Encrypt(string plaintext)
+    public static string DecryptDevice(string pack, string? tag, GreeSession session)
     {
-        var key = Encoding.UTF8.GetBytes(_deviceKey);
+        return Decrypt(pack, tag, session.DeviceKey, session.EncryptionVersion);
+    }
 
+    public static GcmResult EncryptGeneric(string plaintext, GreeEncryptionVersion version)
+    {
+        return Encrypt(plaintext, GetGenericKey(version), version);
+    }
+
+    public static string DecryptGeneric(string pack, string? tag, GreeEncryptionVersion version)
+    {
+        return Decrypt(pack, tag, GetGenericKey(version), version);
+    }
+
+    private static GcmResult Encrypt(string plaintext, string keyText, GreeEncryptionVersion version)
+    {
+        var key = Encoding.UTF8.GetBytes(keyText);
+        ValidateAesKey(key);
         var plaintextBytes = Encoding.UTF8.GetBytes(plaintext);
 
-        var ciphertext = new byte[plaintextBytes.Length];
+        if (version == GreeEncryptionVersion.Ecb)
+        {
+            using var aes = Aes.Create();
+            aes.Key = key;
+            aes.Mode = CipherMode.ECB;
+            aes.Padding = PaddingMode.PKCS7;
+            using var encryptor = aes.CreateEncryptor();
+            var ciphertext = encryptor.TransformFinalBlock(plaintextBytes, 0, plaintextBytes.Length);
+            return new GcmResult { Pack = Convert.ToBase64String(ciphertext) };
+        }
 
+        var gcmCiphertext = new byte[plaintextBytes.Length];
         var tag = new byte[16];
-
-        var aad = Encoding.UTF8.GetBytes(GreeResources.GcmAad);
-
-        using var aes = new AesGcm(key, 16);
-
-        aes.Encrypt(GreeResources.GcmIv, plaintextBytes, ciphertext, tag, aad);
+        using (var aes = new AesGcm(key, 16))
+            aes.Encrypt(GreeResources.GcmIv, plaintextBytes, gcmCiphertext, tag, GreeResources.GcmAadBytes);
 
         return new GcmResult
         {
-            Pack = Convert.ToBase64String(ciphertext),
+            Pack = Convert.ToBase64String(gcmCiphertext),
             Tag = Convert.ToBase64String(tag)
         };
     }
 
-    public string Decrypt(string pack, string tag)
+    private static string Decrypt(string pack, string? tag, string keyText, GreeEncryptionVersion version)
     {
-        var key = Encoding.UTF8.GetBytes(_deviceKey);
-
+        var key = Encoding.UTF8.GetBytes(keyText);
+        ValidateAesKey(key);
         var ciphertext = Convert.FromBase64String(pack);
 
+        if (version == GreeEncryptionVersion.Ecb)
+        {
+            using var aes = Aes.Create();
+            aes.Key = key;
+            aes.Mode = CipherMode.ECB;
+            // Some firmware uses non-PKCS7 trailing bytes. Trim the decrypted JSON to its closing brace.
+            aes.Padding = PaddingMode.None;
+            using var decryptor = aes.CreateDecryptor();
+            var plaintext = decryptor.TransformFinalBlock(ciphertext, 0, ciphertext.Length);
+            var jsonEnd = Array.LastIndexOf(plaintext, (byte)'}');
+            if (jsonEnd < 0)
+                throw new CryptographicException("O pacote ECB descriptografado não contém um objeto JSON.");
+
+            return Encoding.UTF8.GetString(plaintext, 0, jsonEnd + 1);
+        }
+
+        if (string.IsNullOrWhiteSpace(tag))
+            throw new CryptographicException("A resposta GCM não contém a tag de autenticação.");
+
         var tagBytes = Convert.FromBase64String(tag);
+        var gcmPlaintext = new byte[ciphertext.Length];
+        using (var aes = new AesGcm(key, 16))
+            aes.Decrypt(GreeResources.GcmIv, ciphertext, tagBytes, gcmPlaintext, GreeResources.GcmAadBytes);
 
-        var plaintext = new byte[ciphertext.Length];
+        var length = gcmPlaintext.Length;
+        while (length > 0 && gcmPlaintext[length - 1] is 0xFF or 0x00)
+            length--;
 
-        var aad = Encoding.UTF8.GetBytes(GreeResources.GcmAad);
+        return Encoding.UTF8.GetString(gcmPlaintext, 0, length);
+    }
 
-        using var aes = new AesGcm(key, 16);
+    private static string GetGenericKey(GreeEncryptionVersion version) => version switch
+    {
+        GreeEncryptionVersion.Ecb => GenericEcbKey,
+        GreeEncryptionVersion.Gcm => GenericGcmKey,
+        _ => throw new ArgumentOutOfRangeException(nameof(version))
+    };
 
-        aes.Decrypt(GreeResources.GcmIv, ciphertext, tagBytes, plaintext, aad);
-
-        return Encoding.UTF8.GetString(plaintext).Replace("\u00FF", "");
+    private static void ValidateAesKey(byte[] key)
+    {
+        if (key.Length is not (16 or 24 or 32))
+            throw new CryptographicException("A chave recebida não tem um tamanho válido para AES.");
     }
 }

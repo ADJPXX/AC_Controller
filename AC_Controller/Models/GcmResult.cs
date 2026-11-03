@@ -1,8 +1,7 @@
-﻿namespace AC_Controller.Models;
+namespace AC_Controller.Models;
 
 public sealed class GcmResult
 {
     public required string Pack { get; init; }
-
-    public required string Tag { get; init; }
+    public string? Tag { get; init; }
 }

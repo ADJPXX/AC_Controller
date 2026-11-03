@@ -488,3 +488,9 @@ fabric.properties
 .idea/caches/build_file_checksums.ser
 
 # End of https://www.toptal.com/developers/gitignore/api/csharp,dotnetcore,rider
+
+# Temporary local package cache used to compile without changing the global NuGet cache.
+/.build-dotnet/
+/.build-nuget/
+/.build-nuget-http/
+/.build-nuget-plugins/
