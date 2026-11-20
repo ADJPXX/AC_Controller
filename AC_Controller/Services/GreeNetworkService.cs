@@ -4,37 +4,53 @@ using System.Text;
 
 namespace AC_Controller.Services;
 
-public sealed class GreeNetworkService
+internal interface IGreeTransport
 {
+    Task<string> SendAsync(string request, IPAddress ipAddress, int port, CancellationToken cancellationToken = default);
+}
+
+public sealed class GreeNetworkService : IGreeTransport
+{
+    private static readonly Encoding WireEncoding = new UTF8Encoding(false, true);
+    private readonly TimeSpan _timeout;
+
+    public GreeNetworkService() : this(TimeSpan.FromSeconds(GreeResources.ReceiveTimeoutSeconds)) { }
+
+    internal GreeNetworkService(TimeSpan timeout) => _timeout = timeout;
+
     public async Task<string> SendAsync(
         string request,
         IPAddress ipAddress,
         int port,
         CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(_timeout);
         using var client = new UdpClient(AddressFamily.InterNetwork);
-        var data = Encoding.UTF8.GetBytes(request);
         var endpoint = new IPEndPoint(ipAddress, port);
-
-        await client.SendAsync(data, data.Length, endpoint);
-
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromSeconds(GreeResources.ReceiveTimeoutSeconds));
-
-        while (true)
+        var data = WireEncoding.GetBytes(request);
+        try
         {
-            UdpReceiveResult response;
-            try
+            await client.SendAsync(data, endpoint, deadline.Token).ConfigureAwait(false);
+            while (true)
             {
-                response = await client.ReceiveAsync(timeout.Token);
+                deadline.Token.ThrowIfCancellationRequested();
+                var response = await client.ReceiveAsync(deadline.Token).ConfigureAwait(false);
+                if (response.RemoteEndPoint.Equals(endpoint))
+                {
+                    deadline.Token.ThrowIfCancellationRequested();
+                    return WireEncoding.GetString(response.Buffer);
+                }
             }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                throw new TimeoutException($"O aparelho Gree não respondeu em {GreeResources.ReceiveTimeoutSeconds} segundos.");
-            }
-
-            if (response.RemoteEndPoint.Address.Equals(ipAddress) && response.RemoteEndPoint.Port == port)
-                return Encoding.UTF8.GetString(response.Buffer);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(cancellationToken);
+        }
+        catch (OperationCanceledException ex) when (deadline.IsCancellationRequested)
+        {
+            throw new TimeoutException($"O aparelho Gree não respondeu em {_timeout.TotalSeconds:g} segundos.", ex);
         }
     }
 }

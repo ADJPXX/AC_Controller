@@ -13,20 +13,27 @@ public partial class App
     private GreeService? _greeService;
     private GreeStatus? _status;
     private TaskbarIcon? _trayIcon;
-    private bool _isConnected;
     private Stream? _iconStream;
     private Icon? _trayIconImage;
-    private Config _config = new();
     private string _connectionMessage = "Procurando o ar-condicionado na rede local…";
-
-    private readonly StartupService _startupService = new();
     private readonly GreeDiscoveryService _discoveryService = new();
     private readonly GreeNetworkService _networkService = new();
-    private readonly GreeSessionStore _sessionStore = new();
-    private readonly SemaphoreSlim _reconnectSignal = new(0, 1);
-    private readonly CancellationTokenSource _shutdown = new();
-    private int _forceDeviceSelection;
-    private bool _selectionDeclined;
+    private readonly TrayPreferences _preferences;
+    private TrayDeviceSession? _operations;
+    private Task _connectionLoop = Task.CompletedTask;
+    private CancellationTokenSource? _attempt;
+    private DeviceSelectionWindow? _selectionWindow;
+    private readonly TraySelection _selection = new();
+    private bool _stopping;
+
+    public App()
+    {
+        var sessions = new GreeSessionStore();
+        _preferences = new TrayPreferences(
+            () => ConfigService.ReadJson(ex => LogException("Aviso ao ler as preferências", ex)),
+            new StartupService().TaskVerification, ConfigService.Save,
+            sessions.LoadAsync, sessions.SaveAsync, LogException);
+    }
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -34,8 +41,7 @@ public partial class App
 
         try
         {
-            _config = ConfigService.ReadJson();
-            _startupService.TaskVerification(_config);
+            _preferences.Initialize();
 
             _iconStream = typeof(App).Assembly.GetManifestResourceStream("AC_Controller.Resources.accontroller.ico")
                           ?? throw new InvalidOperationException("Não foi possível carregar o ícone do aplicativo.");
@@ -47,7 +53,7 @@ public partial class App
             };
 
             UpdateTrayMenu();
-            _ = RunConnectionLoopAsync(_shutdown.Token);
+            _connectionLoop = SuperviseConnectionAsync();
         }
         catch (Exception ex)
         {
@@ -57,111 +63,106 @@ public partial class App
         }
     }
 
-    private async Task RunConnectionLoopAsync(CancellationToken cancellationToken)
+    private async Task SuperviseConnectionAsync()
     {
-        var retryDelay = TimeSpan.FromSeconds(4);
-
-        while (!cancellationToken.IsCancellationRequested)
+        try
         {
-            try
+            await RunConnectionLoopAsync();
+        }
+        catch (Exception ex)
+        {
+            _attempt = null;
+            LogException("Falha inesperada no ciclo de conexão", ex);
+            if (!_stopping)
             {
-                _isConnected = false;
-                _status = null;
-                _greeService = null;
-                _connectionMessage = "Procurando o ar-condicionado na rede local…";
-                await Dispatcher.InvokeAsync(UpdateTrayMenu);
-
-                var (service, status) = await ConnectAsync(cancellationToken);
-                _greeService = service;
-                _status = status;
-                _isConnected = true;
-                _connectionMessage = string.Empty;
-                retryDelay = TimeSpan.FromSeconds(4);
-                await Dispatcher.InvokeAsync(UpdateTrayMenu);
-
-                while (!cancellationToken.IsCancellationRequested)
-                {
-                    if (await WaitForRetryOrDelayAsync(TimeSpan.FromSeconds(3), cancellationToken))
-                        break;
-
-                    if (cancellationToken.IsCancellationRequested)
-                        break;
-
-                    _status = await _greeService.GetStatusAsync(cancellationToken);
-                    _isConnected = true;
-                    _connectionMessage = string.Empty;
-                    await Dispatcher.InvokeAsync(UpdateTrayMenu);
-                }
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                LogException("Falha na conexão com o ar-condicionado", ex);
-                _isConnected = false;
-                _status = null;
-                _greeService = null;
-                _connectionMessage = ex.Message;
-                await Dispatcher.InvokeAsync(UpdateTrayMenu);
-
-                await WaitForRetryOrDelayAsync(retryDelay, cancellationToken);
-                retryDelay = TimeSpan.FromSeconds(Math.Min(retryDelay.TotalSeconds * 2, 40));
+                MessageBox.Show(ex.Message, "AC Controller", MessageBoxButton.OK, MessageBoxImage.Error);
+                Shutdown();
             }
         }
     }
 
-    private async Task<(GreeService Service, GreeStatus Status)> ConnectAsync(CancellationToken cancellationToken)
+    private async Task RunConnectionLoopAsync()
     {
-        GreeSession? cachedSession = null;
-        try
+        var retryDelay = TimeSpan.FromSeconds(4);
+        while (!_stopping)
         {
-            cachedSession = await _sessionStore.LoadAsync(cancellationToken);
-        }
-        catch (IOException ex)
-        {
-            LogException("Não foi possível ler a sessão salva", ex);
-        }
-
-        var forceSelection = Interlocked.Exchange(ref _forceDeviceSelection, 0) == 1;
-        var preferredMac = forceSelection ? null : _config.DeviceMac ?? cachedSession?.Mac;
-        var lastIp = _config.LastKnownIp ?? cachedSession?.IpAddress.ToString();
-        var devices = await _discoveryService.ScanAsync(lastIp, cancellationToken);
-
-        if (devices.Count == 0)
-            throw new IOException("Nenhum aparelho Gree foi encontrado. Confira o Wi-Fi e tente novamente.");
-
-        GreeDeviceInfo? target = null;
-        if (!forceSelection && !string.IsNullOrWhiteSpace(preferredMac))
-        {
-            var normalizedMac = GreeDiscoveryService.NormalizeMac(preferredMac);
-            target = devices.FirstOrDefault(device =>
-                string.Equals(device.Mac, normalizedMac, StringComparison.OrdinalIgnoreCase));
-
-            if (target is null)
-                throw new IOException($"O aparelho salvo ({normalizedMac}) não foi encontrado na rede local.");
-        }
-        else if (devices.Count == 1)
-        {
-            target = devices[0];
-        }
-        else if (_selectionDeclined && !forceSelection)
-        {
-            throw new IOException("Há vários aparelhos na rede. Use ‘Selecionar aparelho’ no menu do AC Controller.");
-        }
-        else
-        {
-            target = await ShowDeviceSelectionAsync(devices);
-            if (target is null)
+            using var attempt = new CancellationTokenSource();
+            using var sessionLifetime = CancellationTokenSource.CreateLinkedTokenSource(attempt.Token);
+            _attempt = attempt;
+            var failed = false;
+            try
             {
-                _selectionDeclined = true;
-                throw new IOException("Seleção cancelada. Use ‘Selecionar aparelho’ no menu para escolher uma unidade.");
+                _connectionMessage = "Procurando o ar-condicionado na rede local…";
+                UpdateTrayMenu();
+                var (service, status) = await ConnectAsync(attempt.Token);
+                attempt.Token.ThrowIfCancellationRequested();
+                _greeService = service;
+                var operations = new TrayDeviceSession(service.GetStatusAsync, PublishStatus, sessionLifetime.Token);
+                _operations = operations;
+                PublishStatus(status);
+                retryDelay = TimeSpan.FromSeconds(4);
+
+                while (true)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(3), attempt.Token);
+                    await operations.RunAsync();
+                }
+            }
+            catch (OperationCanceledException) when (attempt.IsCancellationRequested)
+            {
+                // Selection changed or the application is exiting.
+            }
+            catch (Exception ex)
+            {
+                failed = true;
+                _connectionMessage = ex.Message;
+                LogException("Falha na conexão com o ar-condicionado", ex);
+            }
+            finally
+            {
+                var oldSession = _operations;
+                _operations = null;
+                _greeService = null;
+                _status = null;
+                sessionLifetime.Cancel();
+                if (oldSession is not null)
+                    await oldSession.DrainAsync();
             }
 
-            _selectionDeclined = false;
+            if (failed && !attempt.IsCancellationRequested)
+            {
+                UpdateTrayMenu();
+                try
+                {
+                    await Task.Delay(retryDelay, attempt.Token);
+                    retryDelay = TimeSpan.FromSeconds(Math.Min(retryDelay.TotalSeconds * 2, 40));
+                }
+                catch (OperationCanceledException) when (attempt.IsCancellationRequested)
+                {
+                    // The new request takes precedence over the remaining backoff.
+                }
+            }
+            _attempt = null;
         }
+    }
 
+    private void PublishStatus(GreeStatus status)
+    {
+        _status = status;
+        _connectionMessage = string.Empty;
+        UpdateTrayMenu();
+    }
+
+    private async Task<(GreeService Service, GreeStatus Status)> ConnectAsync(CancellationToken cancellationToken)
+    {
+        var cachedSession = await _preferences.LoadSessionAsync(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        var preferredMac = _preferences.Settings.DeviceMac ?? cachedSession?.Mac;
+        var lastIp = _preferences.Settings.LastKnownIp ?? cachedSession?.IpAddress.ToString();
+        var devices = await _discoveryService.ScanAsync(lastIp, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var target = _selection.Choose(devices, preferredMac, ShowDeviceSelection, cancellationToken);
         if (cachedSession is not null &&
             string.Equals(cachedSession.Mac, target.Mac, StringComparison.OrdinalIgnoreCase))
         {
@@ -172,12 +173,10 @@ public partial class App
             };
             var cachedService = new GreeService(currentSession);
 
+            GreeStatus? cachedStatus = null;
             try
             {
-                var cachedStatus = await cachedService.GetStatusAsync(cancellationToken);
-                await _sessionStore.SaveAsync(currentSession, cancellationToken);
-                SaveDeviceSettings(target);
-                return (cachedService, cachedStatus);
+                cachedStatus = await cachedService.GetStatusAsync(cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -185,7 +184,13 @@ public partial class App
             }
             catch (Exception ex)
             {
-                LogException("A sessão salva não funcionou; negociando uma nova chave", ex);
+                LogException("A sessão salva não funcionou durante a leitura do status", ex);
+            }
+
+            if (cachedStatus is not null)
+            {
+                await _preferences.RememberAsync(currentSession, cachedSession, cancellationToken);
+                return (cachedService, cachedStatus);
             }
         }
 
@@ -194,78 +199,48 @@ public partial class App
         var service = new GreeService(session);
         var status = await service.GetStatusAsync(cancellationToken);
 
-        await _sessionStore.SaveAsync(session, cancellationToken);
-        SaveDeviceSettings(new GreeDeviceInfo(
-            session.Mac,
-            session.IpAddress,
-            session.Port,
-            session.EncryptionVersion,
-            target.Name,
-            target.Model));
-
+        await _preferences.RememberAsync(session, cachedSession, cancellationToken);
         return (service, status);
     }
 
-    private async Task<GreeDeviceInfo?> ShowDeviceSelectionAsync(IReadOnlyList<GreeDeviceInfo> devices)
+    private GreeDeviceInfo? ShowDeviceSelection(IReadOnlyList<GreeDeviceInfo> devices)
     {
-        var operation = Dispatcher.InvokeAsync(() =>
-        {
-            var window = new DeviceSelectionWindow(devices);
-            return window.ShowDialog() == true ? window.SelectedDevice : null;
-        });
-
-        return await operation.Task;
-    }
-
-    private void SaveDeviceSettings(GreeDeviceInfo device)
-    {
-        _config = new Config
-        {
-            DeviceMac = device.Mac,
-            LastKnownIp = device.IpAddress.ToString(),
-            StartWithWindows = _config.StartWithWindows
-        };
-        ConfigService.Save(_config);
-    }
-
-    private async Task<bool> WaitForRetryOrDelayAsync(TimeSpan delay, CancellationToken cancellationToken)
-    {
-        using var waitCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var delayTask = Task.Delay(delay, waitCancellation.Token);
-        var retryTask = _reconnectSignal.WaitAsync(waitCancellation.Token);
-        var completed = await Task.WhenAny(delayTask, retryTask);
-        waitCancellation.Cancel();
-
+        _selectionWindow = new DeviceSelectionWindow(devices);
         try
         {
-            await completed;
+            return _selectionWindow.ShowDialog() == true ? _selectionWindow.SelectedDevice : null;
         }
-        catch (OperationCanceledException)
+        finally
         {
-            return false;
+            _selectionWindow = null;
         }
-
-        return completed == retryTask && !cancellationToken.IsCancellationRequested;
     }
 
     private void RequestReconnect(bool chooseDevice)
     {
-        if (chooseDevice)
-        {
-            _selectionDeclined = false;
-            Interlocked.Exchange(ref _forceDeviceSelection, 1);
-        }
+        if (_stopping) return;
+        if (chooseDevice) _selection.RequestChoice();
+        CancelAttempt();
+    }
 
-        if (_reconnectSignal.CurrentCount == 0)
-            _reconnectSignal.Release();
+    private void CancelAttempt()
+    {
+        _attempt?.Cancel();
+        if (_selectionWindow?.IsVisible == true)
+            _selectionWindow.Close();
     }
 
     private void UpdateTrayMenu()
     {
-        if (_trayIcon is null || (_trayIcon.ContextMenu?.IsOpen ?? false))
+        if (_stopping || _trayIcon is null) return;
+        if (_trayIcon.ContextMenu is { IsOpen: true } openMenu)
+        {
+            openMenu.Closed -= OnMenuClosed;
+            openMenu.Closed += OnMenuClosed;
             return;
+        }
 
-        if (!_isConnected || _status is null || _greeService is null)
+        if (_operations is null || _status is null || _greeService is null)
         {
             _trayIcon.ToolTipText = $"AC Controller - {_connectionMessage}";
             var disconnectedMenu = new ContextMenu();
@@ -286,7 +261,7 @@ public partial class App
 
             disconnectedMenu.Items.Add(new Separator());
             var exitDisconnected = new MenuItem { Header = "Sair" };
-            exitDisconnected.Click += (_, _) => Shutdown();
+            exitDisconnected.Click += async (_, _) => await ExitAsync();
             disconnectedMenu.Items.Add(exitDisconnected);
             _trayIcon.ContextMenu = disconnectedMenu;
             return;
@@ -309,7 +284,7 @@ public partial class App
         {
             menu.Items.Add(new MenuItem { Header = $"Modo: {GetModeName()}", IsEnabled = false });
             menu.Items.Add(new MenuItem { Header = $"Temperatura: {_status.SetTem}°C", IsEnabled = false });
-            menu.Items.Add(new MenuItem { Header = $"Velocidade: {GetSpeedName()}", IsEnabled = false });
+            menu.Items.Add(new MenuItem { Header = $"Velocidade: {GetSpeedName(_status!)}", IsEnabled = false });
             menu.Items.Add(new MenuItem { Header = $"Direção: {GetFinDirectionName()}", IsEnabled = false });
         }
 
@@ -331,112 +306,99 @@ public partial class App
 
         menu.Items.Add(new Separator());
         var exit = new MenuItem { Header = "Sair" };
-        exit.Click += (_, _) => Shutdown();
+        exit.Click += async (_, _) => await ExitAsync();
         menu.Items.Add(exit);
         _trayIcon.ContextMenu = menu;
     }
 
-    private MenuItem CreatePowerMenu()
+    private void OnMenuClosed(object sender, RoutedEventArgs e)
     {
-        var item = new MenuItem { Header = _status!.IsPoweredOn ? "Desligar" : "Ligar" };
+        ((ContextMenu)sender).Closed -= OnMenuClosed;
+        UpdateTrayMenu();
+    }
+
+    private MenuItem DeviceAction(
+        string label, Func<CancellationToken, Task> sendCommand, bool isChecked = false)
+    {
+        var owner = _operations!;
+        var item = new MenuItem { Header = label, IsChecked = isChecked };
         item.Click += async (_, _) =>
         {
+            if (!ReferenceEquals(_operations, owner) || owner.IsCancelled) return;
             try
             {
-                if (_status!.IsPoweredOn) await _greeService!.TurnOffAsync();
-                else await _greeService!.TurnOnAsync();
-                await RefreshStatusAsync();
+                await owner.RunAsync(sendCommand);
             }
-            catch (Exception ex) { LogException("Falha ao alterar energia", ex); }
+            catch (OperationCanceledException) when (owner.IsCancelled)
+            {
+                // A previous device's menu or an action interrupted by shutdown.
+            }
+            catch (Exception ex)
+            {
+                LogException($"Falha no comando '{label}'", ex);
+                if (ReferenceEquals(_operations, owner)) RequestReconnect(chooseDevice: false);
+            }
         };
         return item;
     }
 
+    private MenuItem CreatePowerMenu()
+    {
+        var service = _greeService!;
+        var (label, command) = PowerAction(_status!.IsPoweredOn, service.TurnOnAsync, service.TurnOffAsync);
+        return DeviceAction(label, command);
+    }
+
+    internal static (string Label, Func<CancellationToken, Task> Command) PowerAction(
+        bool isPoweredOn, Func<CancellationToken, Task> turnOn, Func<CancellationToken, Task> turnOff) =>
+        isPoweredOn ? ("Desligar", turnOff) : ("Ligar", turnOn);
+
     private MenuItem CreateModeMenu()
     {
+        var service = _greeService!;
         var menu = new MenuItem { Header = "Modo" };
-        var heat = new MenuItem { Header = "Quente", IsChecked = _status!.Mod == 4 };
-        heat.Click += async (_, _) =>
-        {
-            try { if (_status!.Mod != 4) await _greeService!.SetModeAsync(4); await RefreshStatusAsync(); }
-            catch (Exception ex) { LogException("Falha ao selecionar modo quente", ex); }
-        };
+        Task SelectModeAsync(int mode, CancellationToken token) =>
+            _status?.Mod == mode ? Task.CompletedTask : service.SetModeAsync(mode, token);
 
-        var cool = new MenuItem { Header = "Frio", IsChecked = _status.Mod == 1 };
-        cool.Click += async (_, _) =>
-        {
-            try { if (_status!.Mod != 1) await _greeService!.SetModeAsync(1); await RefreshStatusAsync(); }
-            catch (Exception ex) { LogException("Falha ao selecionar modo frio", ex); }
-        };
-
-        menu.Items.Add(heat);
-        menu.Items.Add(cool);
+        menu.Items.Add(DeviceAction("Quente", ct => SelectModeAsync(4, ct), _status!.Mod == 4));
+        menu.Items.Add(DeviceAction("Frio", ct => SelectModeAsync(1, ct), _status.Mod == 1));
         return menu;
     }
 
     private MenuItem CreateTemperatureMenu()
     {
+        var service = _greeService!;
         var menu = new MenuItem { Header = "Temperatura" };
         for (var temperature = 16; temperature <= 30; temperature++)
         {
-            var selectedTemp = temperature;
-            var item = new MenuItem { Header = $"{temperature} °C", IsChecked = _status!.SetTem == temperature };
-            item.Click += async (_, _) =>
-            {
-                try { await _greeService!.SetTemperatureAsync(selectedTemp); await RefreshStatusAsync(); }
-                catch (Exception ex) { LogException("Falha ao alterar temperatura", ex); }
-            };
-            menu.Items.Add(item);
+            var value = temperature;
+            menu.Items.Add(DeviceAction($"{value} °C", ct => service.SetTemperatureAsync(value, ct), _status!.SetTem == value));
         }
         return menu;
     }
 
     private MenuItem CreateWindSpeedMenu()
     {
+        var service = _greeService!;
         var menu = new MenuItem { Header = "Velocidade" };
-        var speeds = new Dictionary<int, string>
+        string[] labels = ["Baixo", "Médio-baixo", "Médio", "Médio-alto", "Alto", "Forte"];
+        for (var i = 0; i < labels.Length; i++)
         {
-            [1] = "Baixo", [2] = "Médio-baixo", [3] = "Médio",
-            [4] = "Médio-alto", [5] = "Alto", [6] = "Forte"
-        };
-
-        foreach (var speed in speeds)
-        {
-            var selectedSpeed = speed.Key;
-            var item = new MenuItem
-            {
-                Header = speed.Value,
-                IsChecked = selectedSpeed == 6 ? _status!.Tur == 1 : _status!.Tur == 0 && _status.WdSpd == selectedSpeed
-            };
-            item.Click += async (_, _) =>
-            {
-                try { await _greeService!.SetWindSpeedAsync(selectedSpeed); await RefreshStatusAsync(); }
-                catch (Exception ex) { LogException("Falha ao alterar velocidade", ex); }
-            };
-            menu.Items.Add(item);
+            var speed = i + 1;
+            var selected = speed == 6 ? _status!.Tur == 1 : _status!.Tur == 0 && _status.WdSpd == speed;
+            menu.Items.Add(DeviceAction(labels[i], ct => service.SetWindSpeedAsync(speed, ct), selected));
         }
         return menu;
     }
 
     private MenuItem CreateFinDirectionMenu()
     {
+        var service = _greeService!;
         var menu = new MenuItem { Header = "Direção das aletas" };
-        var directions = new Dictionary<int, string>
+        foreach (var direction in new[] { 2, 3, 4, 5, 6, 1 })
         {
-            [2] = "Direção 1", [3] = "Direção 2", [4] = "Direção 3",
-            [5] = "Direção 4", [6] = "Direção 5", [1] = "Ficar mudando de direção"
-        };
-
-        foreach (var direction in directions)
-        {
-            var selectedDirection = direction.Key;
-            var item = new MenuItem { Header = direction.Value, IsChecked = _status!.SwUpDn == selectedDirection };
-            item.Click += async (_, _) =>
-            {
-                try { await _greeService!.SetFinDirectionAsync(selectedDirection); await RefreshStatusAsync(); }
-                catch (Exception ex) { LogException("Falha ao alterar direção das aletas", ex); }
-            };
-            menu.Items.Add(item);
+            var label = direction == 1 ? "Ficar mudando de direção" : $"Direção {direction - 1}";
+            menu.Items.Add(DeviceAction(label, ct => service.SetFinDirectionAsync(direction, ct), _status!.SwUpDn == direction));
         }
         return menu;
     }
@@ -446,12 +408,12 @@ public partial class App
         0 => "Auto", 1 => "Frio", 2 => "Desumidificar", 3 => "Ventilar", 4 => "Quente", _ => "Desconhecido"
     };
 
-    private string GetSpeedName()
+    internal static string GetSpeedName(GreeStatus status)
     {
-        if (_status!.Tur == 1) return "Forte";
-        return _status.WdSpd switch
+        if (status.Tur == 1) return "Forte";
+        return status.WdSpd switch
         {
-            1 => "Baixo", 2 => "Médio-baixo", 3 => "Médio", 4 => "Médio-alto", 5 => "Alto", _ => "Desconhecido"
+            0 => "Auto", 1 => "Baixo", 2 => "Médio-baixo", 3 => "Médio", 4 => "Médio-alto", 5 => "Alto", _ => "Desconhecido"
         };
     }
 
@@ -466,43 +428,49 @@ public partial class App
         if (_status is null) return "AC Controller";
         if (!_status.IsPoweredOn) return "AC Controller\nDesligado";
         return $"AC Controller\nLigado\nModo: {GetModeName()}\n" +
-               $"Temperatura: {_status.SetTem}°C\nVelocidade: {GetSpeedName()}\n" +
+               $"Temperatura: {_status.SetTem}°C\nVelocidade: {GetSpeedName(_status!)}\n" +
                $"Direção: {GetFinDirectionName()}";
     }
 
-    private async Task RefreshStatusAsync()
+    private static void LogException(string context, Exception exception) =>
+        DiagnosticLog.Write(context, exception);
+
+    private async Task ExitAsync()
     {
+        if (_stopping) return;
+        _stopping = true;
+        CancelAttempt();
         try
         {
-            _status = await _greeService!.GetStatusAsync(_shutdown.Token);
-            _isConnected = true;
-            await Dispatcher.InvokeAsync(UpdateTrayMenu);
+            await _connectionLoop;
         }
         catch (Exception ex)
         {
-            LogException("Falha ao atualizar o status", ex);
-            RequestReconnect(chooseDevice: false);
+            LogException("Falha ao encerrar o ciclo de conexão", ex);
+        }
+        finally
+        {
+            Shutdown();
         }
     }
 
-    private static void LogException(string context, Exception exception)
+    protected override void OnSessionEnding(SessionEndingCancelEventArgs e)
     {
-        try
+        base.OnSessionEnding(e);
+        if (!e.Cancel)
         {
-            Directory.CreateDirectory(ConfigService.DataDirectory);
-            var line = $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz} {context}: {exception.GetType().Name}: {exception.Message}{Environment.NewLine}";
-            File.AppendAllText(Path.Combine(ConfigService.DataDirectory, "ac-controller.log"), line);
-        }
-        catch
-        {
-            // Logging is best effort and must never stop the tray application.
+            _stopping = true;
+            CancelAttempt();
         }
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
-        _shutdown.Cancel();
+        _stopping = true;
+        CancelAttempt();
+        if (_trayIcon?.ContextMenu is { } menu) menu.Closed -= OnMenuClosed;
         _trayIcon?.Dispose();
+        _trayIcon = null;
         _trayIconImage?.Dispose();
         _iconStream?.Dispose();
         base.OnExit(e);

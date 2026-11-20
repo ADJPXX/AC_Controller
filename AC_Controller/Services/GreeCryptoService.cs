@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using AC_Controller.Models;
 
 namespace AC_Controller.Services;
@@ -9,14 +10,17 @@ public static class GreeCryptoService
     // Bootstrap keys used by the reverse-engineered Gree/EWPE local protocol.
     private const string GenericEcbKey = "a3K8Bx%2r8Y7#xDh";
     private const string GenericGcmKey = "{yxAHAY_Lm6pbC/<";
+    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
     public static GcmResult EncryptDevice(string plaintext, GreeSession session)
     {
+        ArgumentNullException.ThrowIfNull(session);
         return Encrypt(plaintext, session.DeviceKey, session.EncryptionVersion);
     }
 
     public static string DecryptDevice(string pack, string? tag, GreeSession session)
     {
+        ArgumentNullException.ThrowIfNull(session);
         return Decrypt(pack, tag, session.DeviceKey, session.EncryptionVersion);
     }
 
@@ -32,9 +36,10 @@ public static class GreeCryptoService
 
     private static GcmResult Encrypt(string plaintext, string keyText, GreeEncryptionVersion version)
     {
-        var key = Encoding.UTF8.GetBytes(keyText);
+        ValidateVersion(version);
+        var key = StrictUtf8.GetBytes(keyText);
         ValidateAesKey(key);
-        var plaintextBytes = Encoding.UTF8.GetBytes(plaintext);
+        var plaintextBytes = StrictUtf8.GetBytes(plaintext);
 
         if (version == GreeEncryptionVersion.Ecb)
         {
@@ -61,7 +66,8 @@ public static class GreeCryptoService
 
     private static string Decrypt(string pack, string? tag, string keyText, GreeEncryptionVersion version)
     {
-        var key = Encoding.UTF8.GetBytes(keyText);
+        ValidateVersion(version);
+        var key = StrictUtf8.GetBytes(keyText);
         ValidateAesKey(key);
         var ciphertext = Convert.FromBase64String(pack);
 
@@ -70,15 +76,15 @@ public static class GreeCryptoService
             using var aes = Aes.Create();
             aes.Key = key;
             aes.Mode = CipherMode.ECB;
-            // Some firmware uses non-PKCS7 trailing bytes. Trim the decrypted JSON to its closing brace.
+            // Older firmware pads the JSON object with arbitrary bytes.
             aes.Padding = PaddingMode.None;
             using var decryptor = aes.CreateDecryptor();
             var plaintext = decryptor.TransformFinalBlock(ciphertext, 0, ciphertext.Length);
-            var jsonEnd = Array.LastIndexOf(plaintext, (byte)'}');
-            if (jsonEnd < 0)
+            var reader = new Utf8JsonReader(plaintext);
+            if (!reader.Read() || reader.TokenType != JsonTokenType.StartObject)
                 throw new CryptographicException("O pacote ECB descriptografado não contém um objeto JSON.");
-
-            return Encoding.UTF8.GetString(plaintext, 0, jsonEnd + 1);
+            reader.Skip();
+            return StrictUtf8.GetString(plaintext, 0, checked((int)reader.BytesConsumed));
         }
 
         if (string.IsNullOrWhiteSpace(tag))
@@ -93,7 +99,7 @@ public static class GreeCryptoService
         while (length > 0 && gcmPlaintext[length - 1] is 0xFF or 0x00)
             length--;
 
-        return Encoding.UTF8.GetString(gcmPlaintext, 0, length);
+        return StrictUtf8.GetString(gcmPlaintext, 0, length);
     }
 
     private static string GetGenericKey(GreeEncryptionVersion version) => version switch
@@ -107,5 +113,11 @@ public static class GreeCryptoService
     {
         if (key.Length is not (16 or 24 or 32))
             throw new CryptographicException("A chave recebida não tem um tamanho válido para AES.");
+    }
+
+    private static void ValidateVersion(GreeEncryptionVersion version)
+    {
+        if (version is not (GreeEncryptionVersion.Ecb or GreeEncryptionVersion.Gcm))
+            throw new ArgumentOutOfRangeException(nameof(version));
     }
 }

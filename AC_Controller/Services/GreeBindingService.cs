@@ -5,10 +5,27 @@ using AC_Controller.Models;
 
 namespace AC_Controller.Services;
 
-public sealed class GreeBindingService(GreeDiscoveryService discovery, GreeNetworkService network)
+public sealed class GreeBindingService
 {
+    private readonly GreeDiscoveryService _discovery;
+    private readonly IGreeTransport _network;
+
+    public GreeBindingService(GreeDiscoveryService discovery, GreeNetworkService network)
+        : this(discovery, (IGreeTransport)network) { }
+
+    internal GreeBindingService(GreeDiscoveryService discovery, IGreeTransport network)
+    {
+        _discovery = discovery;
+        _network = network;
+    }
+
     public async Task<GreeSession> BindAsync(GreeDeviceInfo device, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        ArgumentNullException.ThrowIfNull(device);
+        if (!GreeDiscoveryService.TryNormalizeMac(device.Mac, out var mac))
+            throw new ArgumentException("Endereço MAC inválido.", nameof(device));
+        device = device with { Mac = mac };
         var candidates = new[]
         {
             device.EncryptionVersion,
@@ -17,31 +34,43 @@ public sealed class GreeBindingService(GreeDiscoveryService discovery, GreeNetwo
                 : GreeEncryptionVersion.Ecb
         };
 
-        Exception? lastError = null;
+        var failures = new List<Exception>();
 
         foreach (var version in candidates)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
             // Some modules only accept bind shortly after scan. Refresh immediately before each attempt.
-            var refreshed = await discovery.RefreshDeviceAsync(device.Mac, device.IpAddress, cancellationToken);
-            var target = refreshed ?? device;
+            var target = device;
+            try
+            {
+                target = await _discovery.RefreshDeviceAsync(device.Mac, device.IpAddress, cancellationToken)
+                    .ConfigureAwait(false) ?? device;
+            }
+            catch (SocketException ex)
+            {
+                // Discovery already identified this unit. Its refresh is best effort.
+                failures.Add(ex);
+            }
 
             try
             {
-                var key = await BindOnceAsync(target, version, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                var key = await BindOnceAsync(target, version, cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
                 return new GreeSession(target.Mac, target.IpAddress, target.Port, version, key);
             }
             catch (Exception ex) when (ex is TimeoutException or CryptographicException or JsonException or
                                        FormatException or InvalidOperationException or ArgumentException or SocketException)
             {
-                lastError = ex;
+                failures.Add(ex);
             }
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         throw new InvalidOperationException(
             $"Não foi possível vincular ao aparelho Gree {device.Mac}. Verifique se ele está acessível na mesma rede Wi-Fi.",
-            lastError);
+            new AggregateException(failures));
     }
 
     private async Task<string> BindOnceAsync(
@@ -55,11 +84,13 @@ public sealed class GreeBindingService(GreeDiscoveryService discovery, GreeNetwo
 
         var encrypted = GreeCryptoService.EncryptGeneric(bindData, version);
         var request = CreateEnvelope(device.Mac, encrypted, version, id: 1);
-        var response = await network.SendAsync(request, device.IpAddress, device.Port, cancellationToken);
+        var response = await _network.SendAsync(request, device.IpAddress, device.Port, cancellationToken)
+            .ConfigureAwait(false);
 
         using var outerDocument = JsonDocument.Parse(response);
         var outer = outerDocument.RootElement;
-        if (!outer.TryGetProperty("pack", out var packElement) || packElement.ValueKind != JsonValueKind.String)
+        if (outer.ValueKind != JsonValueKind.Object || !outer.TryGetProperty("pack", out var packElement) ||
+            packElement.ValueKind != JsonValueKind.String)
             throw new InvalidOperationException("A resposta de vínculo não contém 'pack'.");
 
         var pack = packElement.GetString();
@@ -74,14 +105,15 @@ public sealed class GreeBindingService(GreeDiscoveryService discovery, GreeNetwo
         using var innerDocument = JsonDocument.Parse(plaintext);
         var inner = innerDocument.RootElement;
 
-        if (!inner.TryGetProperty("t", out var typeElement) ||
+        if (inner.ValueKind != JsonValueKind.Object || !inner.TryGetProperty("t", out var typeElement) ||
+            typeElement.ValueKind != JsonValueKind.String ||
             !string.Equals(typeElement.GetString(), "bindok", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("O aparelho não confirmou o vínculo ('bindok').");
 
         if (inner.TryGetProperty("mac", out var macElement) &&
-            macElement.ValueKind == JsonValueKind.String &&
-            !string.Equals(GreeDiscoveryService.NormalizeMac(macElement.GetString() ?? string.Empty), device.Mac,
-                StringComparison.OrdinalIgnoreCase))
+            (macElement.ValueKind != JsonValueKind.String ||
+             !GreeDiscoveryService.TryNormalizeMac(macElement.GetString(), out var reportedMac) ||
+             !string.Equals(reportedMac, device.Mac, StringComparison.OrdinalIgnoreCase)))
             throw new InvalidOperationException("A resposta de vínculo pertence a outro aparelho.");
 
         if (inner.TryGetProperty("r", out var resultElement) &&

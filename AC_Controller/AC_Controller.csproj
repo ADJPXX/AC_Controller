@@ -16,6 +16,8 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <InternalsVisibleTo Include="AC_Controller.Tests" />
+        <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
         <PackageReference Include="Hardcodet.NotifyIcon.Wpf" Version="2.0.1" />
         <EmbeddedResource Include="Resources\accontroller.ico" />
     </ItemGroup>

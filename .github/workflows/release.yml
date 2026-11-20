@@ -23,6 +23,9 @@ jobs:
       - name: Restaurar pacotes
         run: dotnet restore
 
+      - name: Testar solução
+        run: dotnet test ./AC_Controller.sln -c Release --no-restore
+
       - name: Publicar projeto
         run: |
           dotnet publish ./AC_Controller/AC_Controller.csproj `

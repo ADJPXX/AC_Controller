@@ -2,7 +2,7 @@
 
 AC Controller is a Windows system-tray application for controlling Gree air conditioners and compatible devices that expose the local Gree/EWPE Smart protocol. It discovers devices on the local IPv4 network and communicates directly with the selected unit over UDP; a Gree account or cloud service is not required.
 
-The production application is a compact tray utility. A separate WPF prototype in `prototype/` explores a larger interface using simulated data and does not control real appliances.
+The production application is a compact tray utility. The xUnit test project covers protocol and network behavior, discovery and pairing, persistence, diagnostics, and tray lifecycle and concurrency.
 
 ## Features
 
@@ -10,7 +10,7 @@ The production application is a compact tray utility. A separate WPF prototype i
 - Select one unit when several are found and remember it by MAC address.
 - Pair with the selected unit, obtain its local session key, and reuse the saved session on later launches when it still works.
 - Show connection state, power, operating mode, set temperature, fan speed, and vane direction in the tray menu and tooltip.
-- Turn the unit on or off; select cooling or heating; set 16–30 °C; select fan speeds 1–5 or Turbo; and choose a vane position or continuous swing.
+- Turn the unit on or off; select cooling or heating; set 16–30 °C; choose fan speeds from Baixo through Alto or Forte (Turbo); and choose a vane position or continuous swing.
 - Poll status periodically and reconnect automatically after a communication failure. The tray menu also provides retry and device-selection actions.
 
 The main application's menu text is currently in Portuguese.
@@ -31,11 +31,11 @@ Discovery uses IPv4 broadcast on active network interfaces. Routers, guest Wi-Fi
 4. The app pairs with the selected unit and saves its MAC address, current IP address, and protected session information.
 5. Open the AC Controller icon in the Windows notification area to see status and issue commands.
 
-The app identifies a saved unit by MAC address, so a DHCP address change does not normally require manual configuration: discovery refreshes the current address. Use **Select another device** in the tray menu to change the selected unit.
+The app identifies a saved unit by MAC address, so a DHCP address change does not normally require manual configuration: discovery refreshes the current address. Use **Selecionar outro aparelho…** in the tray menu to change the selected unit. If the saved MAC is not found, choose **Selecionar aparelho…** from the disconnected menu to select a reachable unit.
 
 ## Controls
 
-The tray menu exposes power, cooling and heating modes, set temperatures from 16 °C through 30 °C, five fan-speed levels plus Turbo, and vane positions plus continuous swing. The protocol service can encode mode values 0–4, but the current tray menu only offers cooling and heating. Device firmware may ignore or interpret some settings differently.
+The tray menu exposes power, cooling and heating modes, set temperatures from 16 °C through 30 °C, five fan-speed levels (**Baixo**, **Médio-baixo**, **Médio**, **Médio-alto**, **Alto**) plus **Forte** (Turbo), and vane positions plus continuous swing. The protocol service can encode mode values 0–4, but the current tray menu only offers cooling and heating. Device firmware may ignore or interpret some settings differently.
 
 The app controls one selected appliance at a time. It refreshes status about every three seconds while connected. A response timeout is five seconds; failed connections retry with an increasing delay, starting at four seconds and capped at forty seconds.
 
@@ -57,11 +57,11 @@ The app stores per-user data under `%LOCALAPPDATA%\AC_Controller`:
 | --- | --- |
 | `settings.json` | Non-secret settings, including the selected device MAC address, last known IP address, and `StartWithWindows` flag. |
 | `session.dat` | Device session information, including its local key, protected with Windows DPAPI for the current Windows user. |
-| `ac-controller.log` | Best-effort local log entries for startup, connection, and command errors. |
+| `ac-controller.log` | Best-effort local log entries for startup, connection, and command errors. The app rotates the active file at 1 MiB and keeps one backup. |
 
 The startup service can register the app in the current user's Windows `Run` key when `StartWithWindows` is enabled. The production tray menu currently has no setting to toggle that option; it defaults to off unless enabled in saved or migrated settings.
 
-A legacy `AC_Controller.json` beside the executable is read only when `settings.json` does not yet exist. The app copies supported non-secret settings into the per-user settings file and attempts to replace the legacy file with a copy that omits unrecognized fields such as an old plaintext key.
+A legacy `AC_Controller.json` beside the executable supplies initial settings when the per-user file is missing. Later launches retry removing legacy plaintext fields if the previous replacement failed. Existing per-user settings take precedence.
 
 ## Network and security notes
 
@@ -77,10 +77,11 @@ From the repository root in PowerShell:
 ```powershell
 dotnet restore .\AC_Controller.sln
 dotnet build .\AC_Controller.sln -c Release
+dotnet test .\AC_Controller.sln -c Release --no-build
 dotnet run --project .\AC_Controller\AC_Controller.csproj
 ```
 
-The solution contains the production application. Its project targets `net10.0-windows`, uses WPF, and references `Hardcodet.NotifyIcon.Wpf` for the notification-area icon.
+The solution includes the WPF production application and its xUnit test project. The app targets `net10.0-windows` and references `Hardcodet.NotifyIcon.Wpf` for the notification-area icon.
 
 To publish a self-contained, single-file Windows x64 executable:
 
@@ -95,20 +96,12 @@ dotnet publish .\AC_Controller\AC_Controller.csproj `
   -o .\publish
 ```
 
-The GitHub Actions workflow publishes this Windows x64 executable when changes are pushed to `master`, then creates a GitHub Release with the generated `AC_Controller.exe`.
-
-## Visual prototype
-
-The separate `prototype/` project is a UI exploration. Its device list, temperatures, connection state, schedules, and history are simulated in memory. Its schedule, history, device, and settings screens are not wired to the production services, and the prototype sends no commands to real appliances. Run it separately:
-
-```powershell
-dotnet run --project .\prototype\ACControllerPrototype.csproj
-```
+The manual GitHub Actions release workflow runs the test suite, publishes the Windows x64 application and creates a GitHub Release with the generated `AC_Controller.exe`.
 
 ## Current scope
 
 - Only one real appliance is controlled at a time.
-- The production app does not currently implement schedules, persistent command history, or the prototype's settings, theme, and notification flows.
+- The production app has no schedules or persistent command history.
 - The production tray menu offers only cooling and heating even though the protocol service can send other mode values.
 - Compatibility depends on the appliance's Wi-Fi module and firmware. The app requires protocol fields expected by its status parser and does not claim compatibility with every Gree-branded model.
 - Device discovery is IPv4 broadcast based; it does not scan IPv6 networks or route broadcasts across subnets.
@@ -117,8 +110,8 @@ dotnet run --project .\prototype\ACControllerPrototype.csproj
 
 - **No device is found:** Confirm the appliance is connected to Wi-Fi, the PC is on the same local network, and the router does not isolate wireless clients. Check that the Windows firewall allows local UDP traffic on port `7000`.
 - **The device is on another subnet:** IPv4 broadcasts generally do not cross routers or VLANs. Put the PC and unit on a shared subnet or configure the network so they can communicate directly.
-- **A saved device is not selected:** Use **Select another device** to scan and choose a unit. The app remembers the choice by MAC address.
-- **Connection or pairing fails:** Use **Try again** in the tray menu, check local reachability and firewall rules, then consult `%LOCALAPPDATA%\AC_Controller\ac-controller.log`. Some compatible-looking models use firmware that does not support the protocol flow implemented here.
+- **The saved device is unavailable:** Choose **Selecionar aparelho…** from the disconnected tray menu and select a reachable unit. The app remembers the choice by MAC address.
+- **Connection or pairing fails:** Use **Tentar novamente** in the tray menu, check local reachability and firewall rules, then consult `%LOCALAPPDATA%\AC_Controller\ac-controller.log`. Some compatible-looking models use firmware that does not support the protocol flow implemented here.
 
 ## Repository layout
 
@@ -130,6 +123,7 @@ AC_Controller/
   Models/                       Configuration, device, session, status, and crypto models
   Services/                     Discovery, binding, protocol, crypto, persistence, startup
   Resources/accontroller.ico    Application icon
-prototype/                      Standalone simulated WPF UI prototype
+AC_Controller.Tests/            xUnit tests for protocol, persistence, diagnostics, and tray lifecycle
+AUDITORIA.md                    Concurrency and reliability audit notes
 .github/workflows/release.yml   Windows x64 publish and GitHub Release workflow
 ```

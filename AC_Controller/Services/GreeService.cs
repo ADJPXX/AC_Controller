@@ -3,14 +3,25 @@ using AC_Controller.Models;
 
 namespace AC_Controller.Services;
 
-public sealed class GreeService(GreeSession session)
+public sealed class GreeService
 {
-    private readonly GreeNetworkService _network = new();
+    private readonly IGreeTransport _network;
 
-    public GreeSession Session { get; } = session;
+    public GreeService(GreeSession session) : this(session, new GreeNetworkService()) { }
+
+    internal GreeService(GreeSession session, IGreeTransport network)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentNullException.ThrowIfNull(network);
+        Session = session;
+        _network = network;
+    }
+
+    public GreeSession Session { get; }
 
     public async Task<GreeStatus> GetStatusAsync(CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var statusPack = CreateStatusPack();
         var encrypted = GreeCryptoService.EncryptDevice(statusPack, Session);
         var request = GreeBindingService.CreateEnvelope(Session.Mac, encrypted, Session.EncryptionVersion, 0);
@@ -19,55 +30,56 @@ public sealed class GreeService(GreeSession session)
         return ParseStatusResponse(decryptedResponse);
     }
 
-    public Task TurnOnAsync() => SetPowerAsync(true);
+    public Task TurnOnAsync() => TurnOnAsync(CancellationToken.None);
+    public Task TurnOnAsync(CancellationToken cancellationToken) =>
+        SendCommandAsync(["Pow"], [1], cancellationToken);
 
-    public Task TurnOffAsync() => SetPowerAsync(false);
+    public Task TurnOffAsync() => TurnOffAsync(CancellationToken.None);
+    public Task TurnOffAsync(CancellationToken cancellationToken) =>
+        SendCommandAsync(["Pow"], [0], cancellationToken);
 
-    private Task SetPowerAsync(bool power) => SendCommandAsync(["Pow"], [power ? 1 : 0]);
-
-    public Task SetModeAsync(int mode)
+    public Task SetModeAsync(int mode) => SetModeAsync(mode, CancellationToken.None);
+    public Task SetModeAsync(int mode, CancellationToken cancellationToken)
     {
         if (mode is < 0 or > 4)
             throw new ArgumentOutOfRangeException(nameof(mode), "O modo deve estar entre 0 e 4.");
-        return SendCommandAsync(["Mod"], [mode]);
+        return SendCommandAsync(["Mod"], [mode], cancellationToken);
     }
 
-    public Task SetTemperatureAsync(int temperature)
+    public Task SetTemperatureAsync(int temperature) => SetTemperatureAsync(temperature, CancellationToken.None);
+    public Task SetTemperatureAsync(int temperature, CancellationToken cancellationToken)
     {
         if (temperature is < 16 or > 30)
             throw new ArgumentOutOfRangeException(nameof(temperature), "A temperatura deve estar entre 16 e 30 °C.");
-        return SendCommandAsync(["SetTem"], [temperature]);
+        return SendCommandAsync(["SetTem"], [temperature], cancellationToken);
     }
 
-    public async Task SetWindSpeedAsync(int speed)
+    public Task SetWindSpeedAsync(int speed) => SetWindSpeedAsync(speed, CancellationToken.None);
+    public Task SetWindSpeedAsync(int speed, CancellationToken cancellationToken)
     {
         if (speed is < 1 or > 6)
             throw new ArgumentOutOfRangeException(nameof(speed), "A velocidade deve estar entre 1 e 6.");
 
-        if (speed == 6)
-        {
-            await SendCommandAsync(["WdSpd"], [1]);
-            await SendCommandAsync(["Tur"], [1]);
-            return;
-        }
-
-        await SendCommandAsync(["Tur"], [0]);
-        await SendCommandAsync(["WdSpd"], [speed]);
+        return speed == 6
+            ? SendCommandAsync(["WdSpd", "Tur"], [1, 1], cancellationToken)
+            : SendCommandAsync(["Tur", "WdSpd"], [0, speed], cancellationToken);
     }
 
-    public Task SetFinDirectionAsync(int direction)
+    public Task SetFinDirectionAsync(int direction) => SetFinDirectionAsync(direction, CancellationToken.None);
+    public Task SetFinDirectionAsync(int direction, CancellationToken cancellationToken)
     {
         if (direction is < 1 or > 6)
             throw new ArgumentOutOfRangeException(nameof(direction), "A direção deve estar entre 1 e 6.");
-        return SendCommandAsync(["SwUpDn"], [direction]);
+        return SendCommandAsync(["SwUpDn"], [direction], cancellationToken);
     }
 
-    private async Task SendCommandAsync(string[] options, int[] values)
+    private async Task SendCommandAsync(string[] options, int[] values, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var commandPack = JsonSerializer.Serialize(new { opt = options, p = values, t = "cmd" });
         var encrypted = GreeCryptoService.EncryptDevice(commandPack, Session);
         var request = GreeBindingService.CreateEnvelope(Session.Mac, encrypted, Session.EncryptionVersion, 0);
-        var response = await _network.SendAsync(request, Session.IpAddress, Session.Port);
+        var response = await _network.SendAsync(request, Session.IpAddress, Session.Port, cancellationToken);
         ValidateCommandResponse(DecryptResponse(response));
     }
 
@@ -97,26 +109,28 @@ public sealed class GreeService(GreeSession session)
         return GreeCryptoService.DecryptDevice(pack, tag, Session);
     }
 
-    private static GreeStatus ParseStatusResponse(string decryptedResponse)
+    private GreeStatus ParseStatusResponse(string decryptedResponse)
     {
         using var document = JsonDocument.Parse(decryptedResponse);
         var root = document.RootElement;
 
+        ValidateReply(root, "dat", requireResult: false);
         if (!root.TryGetProperty("cols", out var colsElement) || colsElement.ValueKind != JsonValueKind.Array ||
             !root.TryGetProperty("dat", out var dataElement) || dataElement.ValueKind != JsonValueKind.Array)
             throw new InvalidOperationException("A resposta de status não contém 'cols' e 'dat' válidos.");
 
-        var columns = colsElement.EnumerateArray()
-            .Where(value => value.ValueKind == JsonValueKind.String)
-            .Select(value => value.GetString() ?? string.Empty)
-            .ToArray();
-        var values = dataElement.EnumerateArray().ToArray();
-        if (columns.Length != values.Length)
+        if (colsElement.GetArrayLength() != dataElement.GetArrayLength())
             throw new InvalidOperationException("A resposta de status tem quantidades diferentes de colunas e valores.");
 
         var data = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
-        for (var i = 0; i < columns.Length; i++)
-            data[columns[i]] = values[i];
+        using var values = dataElement.EnumerateArray();
+        foreach (var column in colsElement.EnumerateArray())
+        {
+            values.MoveNext();
+            if (column.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(column.GetString()) ||
+                !data.TryAdd(column.GetString()!, values.Current))
+                throw new InvalidOperationException("A resposta de status contém uma coluna inválida ou repetida.");
+        }
 
         int ReadInt(string name, int defaultValue = 0)
         {
@@ -132,9 +146,12 @@ public sealed class GreeService(GreeSession session)
             return parsed;
         }
 
+        var power = ReadInt("Pow");
+        if (power is not (0 or 1))
+            throw new InvalidOperationException("O valor de energia retornado deve ser zero ou um.");
         return new GreeStatus
         {
-            Pow = ReadInt("Pow"),
+            Pow = power,
             Mod = ReadInt("Mod"),
             SetTem = ReadInt("SetTem"),
             WdSpd = ReadInt("WdSpd"),
@@ -155,13 +172,31 @@ public sealed class GreeService(GreeSession session)
     private void ValidateCommandResponse(string decryptedResponse)
     {
         using var document = JsonDocument.Parse(decryptedResponse);
-        var root = document.RootElement;
+        ValidateReply(document.RootElement, "res", requireResult: true);
+    }
 
-        if (!root.TryGetProperty("r", out var resultElement) ||
-            resultElement.ValueKind != JsonValueKind.Number ||
-            !resultElement.TryGetInt32(out var result))
-            throw new InvalidOperationException("A resposta descriptografada do Gree não contém um código 'r' válido.");
+    private void ValidateReply(JsonElement root, string expectedType, bool requireResult)
+    {
+        if (root.ValueKind != JsonValueKind.Object)
+            throw new InvalidOperationException("A resposta do Gree deve ser um objeto.");
 
+        if (root.TryGetProperty("t", out var type) &&
+            (type.ValueKind != JsonValueKind.String || type.GetString() != expectedType))
+            throw new InvalidOperationException("O tipo da resposta é incompatível com a operação.");
+
+        if (root.TryGetProperty("mac", out var mac) &&
+            (mac.ValueKind != JsonValueKind.String ||
+             GreeDiscoveryService.NormalizeMac(mac.GetString()!) != GreeDiscoveryService.NormalizeMac(Session.Mac)))
+            throw new InvalidOperationException("A resposta pertence a outro aparelho.");
+
+        if (!root.TryGetProperty("r", out var resultElement))
+        {
+            if (requireResult) throw new InvalidOperationException("A resposta do comando não contém o código 'r'.");
+            return;
+        }
+
+        if (resultElement.ValueKind != JsonValueKind.Number || !resultElement.TryGetInt32(out var result))
+            throw new InvalidOperationException("A resposta contém um código 'r' inválido.");
         if (result != 200)
             throw new InvalidOperationException($"O Gree retornou o código de erro: {result}.");
     }

@@ -27,4 +27,7 @@ public sealed record GreeSession(
     IPAddress IpAddress,
     int Port,
     GreeEncryptionVersion EncryptionVersion,
-    string DeviceKey);
+    string DeviceKey)
+{
+    public override string ToString() => $"{Mac} ({IpAddress}:{Port}, {EncryptionVersion})";
+}
