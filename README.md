@@ -1,129 +1,124 @@
 # AC Controller
 
-AC Controller is a Windows system-tray application for controlling Gree air conditioners and compatible devices that expose the local Gree/EWPE Smart protocol. It discovers devices on the local IPv4 network and communicates directly with the selected unit over UDP; a Gree account or cloud service is not required.
+O AC Controller é um aplicativo para Windows que controla aparelhos de ar-condicionado Gree e modelos compatíveis com o protocolo local Gree/EWPE Smart. Ele procura aparelhos na rede IPv4 local e se comunica diretamente com o selecionado por UDP. Não exige conta Gree nem serviço em nuvem.
 
-The production application is a compact tray utility. The xUnit test project covers protocol and network behavior, discovery and pairing, persistence, diagnostics, and tray lifecycle and concurrency.
+O aplicativo abre o painel de controle ao iniciar e mantém um ícone na área de notificação. Fechar o painel o oculta sem encerrar o aplicativo. Clique no ícone para reabri-lo; use **Sair** no menu do ícone para encerrar.
 
-## Features
+## Recursos
 
-- Discover compatible units with IPv4 broadcast and, when available, a direct scan of the last known address.
-- Select one unit when several are found and remember it by MAC address.
-- Pair with the selected unit, obtain its local session key, and reuse the saved session on later launches when it still works.
-- Show connection state, power, operating mode, set temperature, fan speed, and vane direction in the tray menu and tooltip.
-- Turn the unit on or off; select cooling or heating; set 16–30 °C; choose fan speeds from Baixo through Alto or Forte (Turbo); and choose a vane position or continuous swing.
-- Poll status periodically and reconnect automatically after a communication failure. The tray menu also provides retry and device-selection actions.
+- Descoberta por broadcast IPv4 e tentativa direta ao último endereço IP conhecido.
+- Seleção de um aparelho, com preferência salva pelo endereço MAC.
+- Pareamento local e reutilização de sessão salva quando ela ainda é válida.
+- Painel redimensionável em português, com controles organizados lado a lado em janelas largas e empilhados com rolagem em janelas estreitas.
+- Modos Automático, Frio, Seco, Ventilar e Quente.
+- Temperatura configurável de 16 °C a 30 °C.
+- Velocidades de ventilação baixa, média-baixa, média, média-alta, alta e Turbo. A velocidade Automática pode aparecer no estado do aparelho, mas não é enviada como ajuste manual.
+- Direção das aletas nas posições 1 a 5 ou oscilação contínua. “Padrão do aparelho” é exibido como estado, não como comando manual.
+- Atualização periódica do estado, reconexão automática e controles rápidos no menu da área de notificação.
 
-The main application's menu text is currently in Portuguese.
+O aplicativo controla um aparelho selecionado por vez. Os ajustes dependem dos recursos e do firmware do aparelho.
 
-## Requirements
+## Requisitos de rede
 
-- Windows with the .NET 10 SDK to build and run from source.
-- A Gree unit, or a compatible unit and firmware that respond to the local Gree/EWPE protocol used here.
-- The PC and appliance on the same reachable IPv4 local network. UDP traffic to and from port `7000` must be allowed.
+- Windows e .NET 10 SDK para compilar e executar pelo código-fonte.
+- O computador e o aparelho devem estar na mesma rede IPv4 alcançável.
+- Tráfego UDP local de entrada e saída na porta `7000` precisa ser permitido.
+- Internet não é necessária para localizar ou controlar o aparelho.
 
-Discovery uses IPv4 broadcast on active network interfaces. Routers, guest Wi-Fi, VLANs, and wireless client-isolation settings commonly block broadcasts or local device-to-device traffic. Internet access is not needed for device discovery or control.
+A descoberta envia broadcasts pelas interfaces de rede elegíveis. Roteadores, VLANs, redes de convidados e isolamento de clientes Wi-Fi podem bloquear broadcasts ou a comunicação entre dispositivos. Broadcasts IPv4 normalmente não atravessam sub-redes; o aplicativo não faz descoberta IPv6.
 
-## First run
+## Primeiro uso
 
-1. Connect the PC and air conditioner to the same local network.
-2. Start AC Controller. It scans the local IPv4 networks and tries the saved device address, if one exists.
-3. If one compatible unit is found, the app selects it. If several are found and there is no saved selection, choose one in the selection window.
-4. The app pairs with the selected unit and saves its MAC address, current IP address, and protected session information.
-5. Open the AC Controller icon in the Windows notification area to see status and issue commands.
+1. Conecte o computador e o aparelho à mesma rede local.
+2. Inicie o AC Controller. O painel abre enquanto a busca local começa.
+3. Se um aparelho for encontrado, ele será selecionado automaticamente quando não houver ambiguidade. Se houver vários aparelhos e nenhuma escolha salva, selecione um na janela de seleção.
+4. O aplicativo tenta reutilizar a sessão protegida salva. Se ela não funcionar, faz novo pareamento.
+5. Acompanhe o indicador de conexão e o horário da última leitura no painel. Use **Selecionar outro aparelho** no menu da área de notificação para trocar a seleção.
 
-The app identifies a saved unit by MAC address, so a DHCP address change does not normally require manual configuration: discovery refreshes the current address. Use **Selecionar outro aparelho…** in the tray menu to change the selected unit. If the saved MAC is not found, choose **Selecionar aparelho…** from the disconnected menu to select a reachable unit.
+A preferência é associada ao MAC do aparelho. Se o endereço IP mudar, uma nova descoberta pode atualizar o endereço salvo.
 
-## Controls
+## Painel e menu da área de notificação
 
-The tray menu exposes power, cooling and heating modes, set temperatures from 16 °C through 30 °C, five fan-speed levels (**Baixo**, **Médio-baixo**, **Médio**, **Médio-alto**, **Alto**) plus **Forte** (Turbo), and vane positions plus continuous swing. The protocol service can encode mode values 0–4, but the current tray menu only offers cooling and heating. Device firmware may ignore or interpret some settings differently.
+No painel, os comandos de energia, modo, temperatura, ventilação e aletas são enviados ao aparelho conectado. Alterações de clima ficam disponíveis quando há conexão e o aparelho está ligado. O menu do ícone oferece atalhos de energia, modos Frio e Quente, temperaturas, velocidades, direção das aletas, seleção de aparelho, reabertura do painel e saída.
 
-The app controls one selected appliance at a time. It refreshes status about every three seconds while connected. A response timeout is five seconds; failed connections retry with an increasing delay, starting at four seconds and capped at forty seconds.
+O aplicativo lê o estado aproximadamente a cada três segundos enquanto está conectado. As operações de cada sessão são enfileiradas para evitar que comandos e leituras concorrentes se sobreponham. Após uma falha, ele tenta reconectar com espera crescente: começa em quatro segundos e chega ao limite de quarenta segundos. Uma resposta de rede tem timeout de cinco segundos.
 
-## How the application works
+## Como funciona
 
-1. **Discovery** (`GreeDiscoveryService`) sends a scan packet to the IPv4 broadcast address for each eligible network interface, collects responses, decrypts the returned device metadata, normalizes MAC addresses, and removes duplicates. If a last known IPv4 address is available and broadcast did not find that address, the app also sends a direct scan there.
-2. **Selection and session reuse** (`App`) selects the saved MAC when possible, opens a selection window if needed, then tries the protected cached session for that MAC. If the cached session cannot retrieve status, the app negotiates a new session.
-3. **Pairing** (`GreeBindingService`) refreshes the device scan and sends a bind request. It tries the encryption version reported by discovery, then the other supported version if necessary.
-4. **Commands and status** (`GreeService`) serializes protocol payloads, encrypts them with the device session key, exchanges packets through `GreeNetworkService`, validates responses, and maps status fields to `GreeStatus`.
-5. **Tray and reconnect loop** (`App`) updates the Windows notification-area menu, polls status, and schedules retries. The WPF device-selection window is created only when the user must choose a unit.
+1. **Descoberta** (`GreeDiscoveryService`): envia consultas UDP para os endereços de broadcast IPv4 das interfaces elegíveis, coleta respostas e remove aparelhos duplicados por MAC. Se o endereço IP conhecido não foi localizado pelo broadcast, tenta consultá-lo diretamente.
+2. **Seleção e sessão** (`App`, `TraySelection` e `TrayPreferences`): escolhe o MAC salvo quando disponível, solicita uma escolha quando necessário e tenta carregar a sessão local protegida.
+3. **Pareamento** (`GreeBindingService`): atualiza os dados do aparelho e tenta o pareamento com as variantes criptográficas reconhecidas pelo protocolo.
+4. **Comandos e estado** (`GreeService` e `GreeNetworkService`): monta e valida mensagens JSON, envia e recebe datagramas UDP, aplica a criptografia exigida pelo aparelho e converte as respostas para o estado usado pela interface.
+5. **Interface e ciclo de conexão** (`ControlWindow` e `App`): apresenta estado e comandos no painel WPF e no menu da bandeja, atualiza leituras e coordena cancelamento e reconexão.
 
-The protocol implementation supports the Gree variants represented in the code as AES-ECB and AES-GCM. Discovery distinguishes the response format by the presence of a GCM authentication tag. These details are implementation compatibility mechanisms, not a general-purpose secure transport.
+O código oferece compatibilidade com mensagens AES-ECB e AES-GCM conforme as variantes encontradas nos aparelhos suportados. Isso descreve compatibilidade de protocolo; não representa um canal de rede seguro de uso geral.
 
-## Configuration and local data
+## Arquivos locais e privacidade
 
-The app stores per-user data under `%LOCALAPPDATA%\AC_Controller`:
+Os dados por usuário são gravados em `%LOCALAPPDATA%\AC_Controller`:
 
-| File | Contents |
+| Arquivo | Conteúdo |
 | --- | --- |
-| `settings.json` | Non-secret settings, including the selected device MAC address, last known IP address, and `StartWithWindows` flag. |
-| `session.dat` | Device session information, including its local key, protected with Windows DPAPI for the current Windows user. |
-| `ac-controller.log` | Best-effort local log entries for startup, connection, and command errors. The app rotates the active file at 1 MiB and keeps one backup. |
+| `settings.json` | Preferências sem segredo, incluindo MAC selecionado, último IP conhecido e opção `StartWithWindows`. |
+| `session.dat` | Dados da sessão local, protegidos com DPAPI para o usuário atual do Windows. |
+| `ac-controller.log` | Registro local de eventos e falhas. O log ativo é rotacionado ao atingir 1 MiB, mantendo um arquivo de backup. |
 
-The startup service can register the app in the current user's Windows `Run` key when `StartWithWindows` is enabled. The production tray menu currently has no setting to toggle that option; it defaults to off unless enabled in saved or migrated settings.
+O serviço de inicialização pode registrar o aplicativo na chave `Run` do usuário do Windows quando `StartWithWindows` está habilitado. A versão atual não oferece um controle visível para alterar essa opção; o padrão é desativado, salvo configuração existente ou migrada.
 
-A legacy `AC_Controller.json` beside the executable supplies initial settings when the per-user file is missing. Later launches retry removing legacy plaintext fields if the previous replacement failed. Existing per-user settings take precedence.
+Se ainda não existir o arquivo de preferências por usuário, uma configuração legada `AC_Controller.json` ao lado do executável pode fornecer os dados iniciais. As configurações por usuário têm precedência.
 
-## Network and security notes
+### Segurança
 
-- Keep the appliance and PC on a trusted local network. Do not expose or port-forward UDP port `7000` to the public internet.
-- The local protocol uses reverse-engineered, shared bootstrap keys for discovery and pairing. These are not unique credentials for an individual installation.
-- The implementation supports both legacy AES-ECB packets and AES-GCM packets. ECB does not authenticate packets. GCM uses the fixed IV and associated data required by the device protocol; reusing a fixed nonce is not a pattern to adopt in new cryptographic protocols.
-- DPAPI protects the saved session file for the current Windows user. It does not secure traffic on the local network or protect against code already running as that user.
+- Use o aparelho somente em uma rede local confiável. Não exponha nem redirecione a porta UDP `7000` para a Internet.
+- O protocolo local utiliza chaves compartilhadas de bootstrap para descoberta e pareamento.
+- Mensagens AES-ECB não autenticam o conteúdo. AES-GCM é usado com os parâmetros exigidos pelo protocolo do aparelho.
+- DPAPI protege o arquivo de sessão para o usuário atual do Windows; não criptografa o tráfego na rede local.
 
-## Build and run
+## Compilar, executar e testar
 
-From the repository root in PowerShell:
+Os projetos usam WPF e `net10.0-windows`; execute os comandos em um ambiente Windows com o SDK .NET 10 instalado. Na raiz do repositório:
 
-```powershell
+~~~powershell
 dotnet restore .\AC_Controller.sln
 dotnet build .\AC_Controller.sln -c Release
 dotnet test .\AC_Controller.sln -c Release --no-build
 dotnet run --project .\AC_Controller\AC_Controller.csproj
-```
+~~~
 
-The solution includes the WPF production application and its xUnit test project. The app targets `net10.0-windows` and references `Hardcodet.NotifyIcon.Wpf` for the notification-area icon.
+A suíte automatizada usa xUnit e NSubstitute e inclui testes de interface WPF, ciclo de vida da bandeja, persistência, rede, criptografia, concorrência e logging. Os testes de rede usam cenários locais/simulados; não precisam controlar um aparelho real.
 
-To publish a self-contained, single-file Windows x64 executable:
+## Publicar para Windows x64
 
-```powershell
-dotnet publish .\AC_Controller\AC_Controller.csproj `
-  -c Release `
-  -r win-x64 `
-  --self-contained true `
-  -p:PublishSingleFile=true `
-  -p:IncludeNativeLibrariesForSelfExtract=true `
-  -p:PublishTrimmed=false `
-  -o .\publish
-```
+Para publicar um executável autocontido em arquivo único:
 
-The manual GitHub Actions release workflow runs the test suite, publishes the Windows x64 application and creates a GitHub Release with the generated `AC_Controller.exe`.
+~~~powershell
+dotnet publish .\AC_Controller\AC_Controller.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=false -o .\publish
+~~~
 
-## Current scope
+O workflow manual do GitHub Actions (`workflow_dispatch`) restaura os pacotes, executa a suíte, publica para Windows x64 e cria uma GitHub Release com `AC_Controller.exe`.
 
-- Only one real appliance is controlled at a time.
-- The production app has no schedules or persistent command history.
-- The production tray menu offers only cooling and heating even though the protocol service can send other mode values.
-- Compatibility depends on the appliance's Wi-Fi module and firmware. The app requires protocol fields expected by its status parser and does not claim compatibility with every Gree-branded model.
-- Device discovery is IPv4 broadcast based; it does not scan IPv6 networks or route broadcasts across subnets.
+## Limites e solução de problemas
 
-## Troubleshooting
+- O aplicativo controla apenas um aparelho por vez e não oferece agendamentos nem histórico persistente de comandos.
+- O menu da bandeja oferece atalhos para Frio e Quente; o painel também disponibiliza Automático, Seco e Ventilar.
+- A compatibilidade depende do módulo Wi-Fi e do firmware. Nem todo modelo Gree implementa o protocolo e os campos de estado esperados.
+- Se nenhum aparelho aparecer, confirme a conexão Wi-Fi, a mesma rede local, as regras de firewall para UDP `7000` e a ausência de isolamento entre clientes.
+- Se o aparelho estiver em outra sub-rede, o broadcast provavelmente não o alcançará. Configure conectividade direta entre as redes ou coloque computador e aparelho na mesma sub-rede.
+- Para falha de conexão ou pareamento, use **Tentar novamente**, confira a rede e consulte `%LOCALAPPDATA%\AC_Controller\ac-controller.log`.
 
-- **No device is found:** Confirm the appliance is connected to Wi-Fi, the PC is on the same local network, and the router does not isolate wireless clients. Check that the Windows firewall allows local UDP traffic on port `7000`.
-- **The device is on another subnet:** IPv4 broadcasts generally do not cross routers or VLANs. Put the PC and unit on a shared subnet or configure the network so they can communicate directly.
-- **The saved device is unavailable:** Choose **Selecionar aparelho…** from the disconnected tray menu and select a reachable unit. The app remembers the choice by MAC address.
-- **Connection or pairing fails:** Use **Tentar novamente** in the tray menu, check local reachability and firewall rules, then consult `%LOCALAPPDATA%\AC_Controller\ac-controller.log`. Some compatible-looking models use firmware that does not support the protocol flow implemented here.
+`AUDITORIA.md` é um relatório histórico da auditoria da versão anterior à inclusão do painel principal; não descreve integralmente a interface atual.
 
-## Repository layout
+## Estrutura do repositório
 
-```text
+~~~text
 AC_Controller.sln
 AC_Controller/
-  App.xaml(.cs)                 Tray lifecycle, UI, polling, and reconnect loop
-  DeviceSelectionWindow.cs      Device chooser
-  Models/                       Configuration, device, session, status, and crypto models
-  Services/                     Discovery, binding, protocol, crypto, persistence, startup
-  Resources/accontroller.ico    Application icon
-AC_Controller.Tests/            xUnit tests for protocol, persistence, diagnostics, and tray lifecycle
-AUDITORIA.md                    Concurrency and reliability audit notes
-.github/workflows/release.yml   Windows x64 publish and GitHub Release workflow
-```
+  App.xaml(.cs)                  Inicialização, bandeja, painel e reconexão
+  ControlWindow.xaml(.cs)        Painel de controle responsivo
+  DeviceSelectionWindow.xaml/.cs Seletor de aparelho
+  Models/                        Configuração, aparelho e estado
+  Services/                      Rede, descoberta, protocolo, persistência e logs
+  Resources/                     Ícones e recursos visuais
+AC_Controller.Tests/             Testes automatizados xUnit
+.github/workflows/release.yml    Build, testes e publicação manual
+~~~
