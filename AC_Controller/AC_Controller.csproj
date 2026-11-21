@@ -20,6 +20,7 @@
         <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
         <PackageReference Include="Hardcodet.NotifyIcon.Wpf" Version="2.0.1" />
         <EmbeddedResource Include="Resources\accontroller.ico" />
+        <Resource Include="Resources\climate-room.png" />
     </ItemGroup>
 
 </Project>

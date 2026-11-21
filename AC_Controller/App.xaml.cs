@@ -10,12 +10,19 @@ namespace AC_Controller;
 
 public partial class App
 {
+    private const string SearchingMessage = "Procurando o ar-condicionado na rede local…";
     private GreeService? _greeService;
     private GreeStatus? _status;
     private TaskbarIcon? _trayIcon;
     private Stream? _iconStream;
     private Icon? _trayIconImage;
-    private string _connectionMessage = "Procurando o ar-condicionado na rede local…";
+    private string _connectionMessage = SearchingMessage;
+    private string? _commandFailure;
+    private bool _searching = true;
+    private int _pendingCommands;
+    private GreeDeviceInfo? _device;
+    private ControlWindow? _panel;
+    private TrayDeviceSession? _displayedSession;
     private readonly GreeDiscoveryService _discoveryService = new();
     private readonly GreeNetworkService _networkService = new();
     private readonly TrayPreferences _preferences;
@@ -51,7 +58,8 @@ public partial class App
                 Icon = _trayIconImage,
                 ToolTipText = "AC Controller - procurando o aparelho"
             };
-
+            _trayIcon.TrayLeftMouseUp += OnTrayClick;
+            OpenPanel();
             UpdateTrayMenu();
             _connectionLoop = SuperviseConnectionAsync();
         }
@@ -92,13 +100,18 @@ public partial class App
             var failed = false;
             try
             {
-                _connectionMessage = "Procurando o ar-condicionado na rede local…";
-                UpdateTrayMenu();
+                _connectionMessage = SearchingMessage;
+                _searching = true;
+                RefreshViews();
                 var (service, status) = await ConnectAsync(attempt.Token);
                 attempt.Token.ThrowIfCancellationRequested();
                 _greeService = service;
+                if (_device is not null)
+                    _device = _device with { IpAddress = service.Session.IpAddress, Port = service.Session.Port };
                 var operations = new TrayDeviceSession(service.GetStatusAsync, PublishStatus, sessionLifetime.Token);
                 _operations = operations;
+                _commandFailure = null;
+                _searching = false;
                 PublishStatus(status);
                 retryDelay = TimeSpan.FromSeconds(4);
 
@@ -115,6 +128,7 @@ public partial class App
             catch (Exception ex)
             {
                 failed = true;
+                _searching = false;
                 _connectionMessage = ex.Message;
                 LogException("Falha na conexão com o ar-condicionado", ex);
             }
@@ -125,13 +139,13 @@ public partial class App
                 _greeService = null;
                 _status = null;
                 sessionLifetime.Cancel();
+                RefreshViews();
                 if (oldSession is not null)
                     await oldSession.DrainAsync();
             }
 
             if (failed && !attempt.IsCancellationRequested)
             {
-                UpdateTrayMenu();
                 try
                 {
                     await Task.Delay(retryDelay, attempt.Token);
@@ -150,7 +164,7 @@ public partial class App
     {
         _status = status;
         _connectionMessage = string.Empty;
-        UpdateTrayMenu();
+        RefreshViews();
     }
 
     private async Task<(GreeService Service, GreeStatus Status)> ConnectAsync(CancellationToken cancellationToken)
@@ -163,6 +177,9 @@ public partial class App
         cancellationToken.ThrowIfCancellationRequested();
 
         var target = _selection.Choose(devices, preferredMac, ShowDeviceSelection, cancellationToken);
+        _device = target;
+        _connectionMessage = "Conectando ao aparelho…";
+        RefreshViews();
         if (cachedSession is not null &&
             string.Equals(cachedSession.Mac, target.Mac, StringComparison.OrdinalIgnoreCase))
         {
@@ -206,6 +223,11 @@ public partial class App
     private GreeDeviceInfo? ShowDeviceSelection(IReadOnlyList<GreeDeviceInfo> devices)
     {
         _selectionWindow = new DeviceSelectionWindow(devices);
+        if (_panel is { IsVisible: true } owner)
+        {
+            _selectionWindow.Owner = owner;
+            _selectionWindow.WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        }
         try
         {
             return _selectionWindow.ShowDialog() == true ? _selectionWindow.SelectedDevice : null;
@@ -219,8 +241,16 @@ public partial class App
     private void RequestReconnect(bool chooseDevice)
     {
         if (_stopping) return;
-        if (chooseDevice) _selection.RequestChoice();
+        if (chooseDevice)
+        {
+            _selection.RequestChoice();
+            _device = null;
+            _commandFailure = null;
+        }
+        _connectionMessage = chooseDevice ? SearchingMessage : "Reconectando ao aparelho…";
+        _searching = true;
         CancelAttempt();
+        RefreshViews();
     }
 
     private void CancelAttempt()
@@ -228,6 +258,81 @@ public partial class App
         _attempt?.Cancel();
         if (_selectionWindow?.IsVisible == true)
             _selectionWindow.Close();
+    }
+
+    private void OnTrayClick(object sender, RoutedEventArgs e) => OpenPanel();
+
+    private void OpenPanel()
+    {
+        if (_stopping) return;
+        if (_selectionWindow is { IsVisible: true } selector)
+        {
+            selector.Activate();
+            return;
+        }
+        if (_panel is null)
+        {
+            ControlWindow? window = null;
+            window = new ControlWindow(
+                action => ReferenceEquals(window, _panel) ? ExecutePanelActionAsync(action) : Task.CompletedTask,
+                () => { if (ReferenceEquals(window, _panel)) RequestReconnect(chooseDevice: true); },
+                () => { if (ReferenceEquals(window, _panel)) RequestReconnect(chooseDevice: false); });
+            window.Closed += OnPanelClosed;
+            _panel = window;
+            MainWindow = window;
+        }
+        RenderPanel();
+        if (_panel.WindowState == WindowState.Minimized) _panel.WindowState = WindowState.Normal;
+        if (!_panel.IsVisible) _panel.Show();
+        _panel.Activate();
+    }
+
+    private void OnPanelClosed(object? sender, EventArgs e)
+    {
+        if (sender is ControlWindow closed) closed.Closed -= OnPanelClosed;
+        if (!ReferenceEquals(sender, _panel)) return;
+        _panel = null;
+        _displayedSession = null;
+    }
+
+    private string ConnectionText => _commandFailure is null
+        ? _connectionMessage
+        : $"{_commandFailure} {_connectionMessage}".TrimEnd();
+
+    private void RenderPanel()
+    {
+        if (_stopping || _panel is null) return;
+        var panel = _panel;
+        var session = _operations is { IsCancelled: false } ? _operations : null;
+        var name = _device switch
+        {
+            null => null,
+            { } device when !string.IsNullOrWhiteSpace(device.Name) => device.Name,
+            { } device when !string.IsNullOrWhiteSpace(device.Model) => device.Model,
+            { } device => device.Mac
+        };
+        // Rendering a selected item can raise WPF change events synchronously.
+        _displayedSession = null;
+        panel.Render(new PanelState(session is null ? null : _status, name,
+            _device?.IpAddress.ToString() ?? _preferences.Settings.LastKnownIp,
+            _connectionMessage, _searching, _pendingCommands != 0, _commandFailure));
+        if (ReferenceEquals(panel, _panel)) _displayedSession = session;
+    }
+
+    private void RefreshViews()
+    {
+        RenderPanel();
+        UpdateTrayMenu();
+    }
+
+    private Task ExecutePanelActionAsync(PanelAction action)
+    {
+        var owner = _displayedSession;
+        var service = _greeService;
+        if (owner is null || service is null || !action.IsAvailable(_status, _pendingCommands != 0))
+            return Task.CompletedTask;
+
+        return ExecuteCommandAsync(owner, token => action.SendAsync(service, token), "Comando do painel");
     }
 
     private void UpdateTrayMenu()
@@ -240,13 +345,15 @@ public partial class App
             return;
         }
 
-        if (_operations is null || _status is null || _greeService is null)
+        if (_operations is null || _operations.IsCancelled || _status is null || _greeService is null)
         {
-            _trayIcon.ToolTipText = $"AC Controller - {_connectionMessage}";
+            var tooltip = $"AC Controller - {ConnectionText}";
+            _trayIcon.ToolTipText = tooltip.Length <= 127 ? tooltip : tooltip[..126] + "…";
             var disconnectedMenu = new ContextMenu();
+            AddOpenPanelItem(disconnectedMenu);
             disconnectedMenu.Items.Add(new MenuItem
             {
-                Header = string.IsNullOrWhiteSpace(_connectionMessage) ? "Procurando aparelho…" : _connectionMessage,
+                Header = string.IsNullOrWhiteSpace(ConnectionText) ? "Procurando aparelho…" : ConnectionText,
                 IsEnabled = false
             });
             disconnectedMenu.Items.Add(new Separator());
@@ -269,6 +376,7 @@ public partial class App
 
         _trayIcon.ToolTipText = BuildTooltip();
         var menu = new ContextMenu();
+        AddOpenPanelItem(menu);
         menu.Items.Add(new MenuItem
         {
             Header = _status.IsPoweredOn ? "Ar-condicionado: Ligado" : "Ar-condicionado: Desligado",
@@ -317,29 +425,51 @@ public partial class App
         UpdateTrayMenu();
     }
 
+    private void AddOpenPanelItem(ContextMenu menu)
+    {
+        var open = new MenuItem { Header = "Abrir painel" };
+        open.Click += (_, _) => OpenPanel();
+        menu.Items.Add(open);
+        menu.Items.Add(new Separator());
+    }
+
     private MenuItem DeviceAction(
         string label, Func<CancellationToken, Task> sendCommand, bool isChecked = false)
     {
         var owner = _operations!;
         var item = new MenuItem { Header = label, IsChecked = isChecked };
-        item.Click += async (_, _) =>
-        {
-            if (!ReferenceEquals(_operations, owner) || owner.IsCancelled) return;
-            try
-            {
-                await owner.RunAsync(sendCommand);
-            }
-            catch (OperationCanceledException) when (owner.IsCancelled)
-            {
-                // A previous device's menu or an action interrupted by shutdown.
-            }
-            catch (Exception ex)
-            {
-                LogException($"Falha no comando '{label}'", ex);
-                if (ReferenceEquals(_operations, owner)) RequestReconnect(chooseDevice: false);
-            }
-        };
+        item.Click += async (_, _) => await ExecuteCommandAsync(owner, sendCommand, label);
         return item;
+    }
+
+    private async Task ExecuteCommandAsync(
+        TrayDeviceSession owner, Func<CancellationToken, Task> sendCommand, string label)
+    {
+        if (_stopping || !ReferenceEquals(_operations, owner) || owner.IsCancelled) return;
+        _pendingCommands++;
+        try
+        {
+            RenderPanel();
+            await owner.RunAsync(sendCommand);
+        }
+        catch (OperationCanceledException) when (owner.IsCancelled)
+        {
+            // The user changed devices or exited before the action completed.
+        }
+        catch (Exception ex)
+        {
+            LogException($"Falha no comando '{label}'", ex);
+            if (ReferenceEquals(_operations, owner) && !owner.IsCancelled)
+            {
+                _commandFailure = $"Falha no comando. {ex.Message}";
+                RequestReconnect(chooseDevice: false);
+            }
+        }
+        finally
+        {
+            _pendingCommands--;
+            RenderPanel();
+        }
     }
 
     private MenuItem CreatePowerMenu()
@@ -469,6 +599,7 @@ public partial class App
         _stopping = true;
         CancelAttempt();
         if (_trayIcon?.ContextMenu is { } menu) menu.Closed -= OnMenuClosed;
+        if (_trayIcon is not null) _trayIcon.TrayLeftMouseUp -= OnTrayClick;
         _trayIcon?.Dispose();
         _trayIcon = null;
         _trayIconImage?.Dispose();

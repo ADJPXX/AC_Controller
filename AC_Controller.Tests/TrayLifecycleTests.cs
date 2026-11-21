@@ -11,7 +11,10 @@ public sealed class TrayLifecycleTests
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
 
     [Fact]
-    public async Task ClosingTheOnlySelectorUsesExplicitApplicationShutdown()
+    public Task ClosingTheOnlySelectorUsesExplicitApplicationShutdown() =>
+        WpfTestProcess.RunAsync(typeof(TrayLifecycleTests), nameof(ClosingTheOnlySelectorUsesExplicitApplicationShutdown), CheckShutdownAsync);
+
+    private static async Task CheckShutdownAsync()
     {
         var finished = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
